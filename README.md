@@ -289,13 +289,15 @@ docker buildx build --platform linux/arm64 \
 
 All upstream dependencies are version-pinned for reproducible builds:
 
+All versions are fully qualified (no floating `major.minor` tags):
+
 | Dependency | Where | Pinned form |
 |---|---|---|
-| Go toolchain | `Dockerfile` `FROM golang:…` | tag + `@sha256` digest |
-| Alpine (busybox build base) | `Dockerfile` `FROM alpine:…` | tag + `@sha256` digest |
-| Tailscale | `Dockerfile` `ARG TAILSCALE_VERSION` | git release tag |
-| busybox | `Dockerfile` `ARG BUSYBOX_VERSION` | release version |
-| Renovate runner | `.woodpecker/renovate.yaml` `image:` | tag |
+| Go toolchain | `Dockerfile` `FROM golang:…` | full version tag + `@sha256` digest |
+| Alpine (busybox build base) | `Dockerfile` `FROM alpine:…` | full version tag + `@sha256` digest |
+| Tailscale | `Dockerfile` `ARG TAILSCALE_VERSION` | full git release tag |
+| busybox | `Dockerfile` `ARG BUSYBOX_VERSION` | full release version |
+| Renovate / OpenBao | `.woodpecker/renovate.yaml` `image:` | full version tag |
 
 Updates are proposed automatically by [Renovate](https://docs.renovatebot.com/),
 run **self-hosted** from a Woodpecker cron pipeline (Woodpecker has no native
