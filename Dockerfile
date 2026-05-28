@@ -191,6 +191,20 @@ RUN mkdir -p /rootfs/bin && \
 # =============================================================================
 FROM scratch
 
+# Release version (the git tag, e.g. v1.98.3-mt.1), injected by CI at build
+# time. This is the value the MikroTik update cronjob compares against the
+# registry to decide whether to recreate the container: it changes ONLY on a
+# meaningful release (Tailscale bump -> mt.1, or a manual mt.N), never on a
+# build-system-only rebuild. Defaults to "dev" for local builds.
+ARG OCI_VERSION=dev
+
+# OCI image annotations. org.opencontainers.image.version is the canonical place
+# for the release version and is what the router reads back from the registry.
+LABEL org.opencontainers.image.title="mikrotik-tailscale" \
+      org.opencontainers.image.description="Minimal Tailscale image for MikroTik RouterOS Container" \
+      org.opencontainers.image.source="https://gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale" \
+      org.opencontainers.image.version="${OCI_VERSION}"
+
 # Custom static busybox + applet symlinks (provides /bin/sh and utilities)
 COPY --from=busybox /rootfs/ /
 

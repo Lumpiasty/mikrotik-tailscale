@@ -1,0 +1,63 @@
+# Auto-create the release tag when Tailscale is bumped.
+#
+# Policy: a new Tailscale version (merged by Renovate, which edits
+# ARG TAILSCALE_VERSION in the Dockerfile) gets released as v<ts>-mt.1.
+# This job runs on every push to main, reads TAILSCALE_VERSION from the
+# Dockerfile, and — if no v<ts>-mt.* tag exists yet — creates and pushes
+# v<ts>-mt.1. Pushing that tag triggers .woodpecker/release.yaml.
+#
+# Follow-up releases (mt.2, mt.3, ... for manual fixes/changes) are tagged
+# BY HAND; this job never creates them (it only ever creates -mt.1).
+#
+# Dependency-only bumps (Go/Alpine/busybox/dockerfile) leave TAILSCALE_VERSION
+# unchanged, so no tag is created and nothing is released — they ride along
+# with the next Tailscale bump or manual tag.
+
+when:
+  - event: push
+    branch: main
+
+steps:
+  - name: Get git token from OpenBao
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+      ROLE_ID:
+        from_secret: renovate_role_id
+      SECRET_ID:
+        from_secret: renovate_secret_id
+    commands:
+      - bao write -field token auth/approle/login
+          role_id=$ROLE_ID
+          secret_id=$SECRET_ID > /woodpecker/.vault_id
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao kv get -mount secret -field RENOVATE_TOKEN renovate > /woodpecker/git_token
+
+  - name: Auto-tag mt.1 on Tailscale bump
+    image: alpine/git:2.49.1
+    environment:
+      CI_REPO_URL: https://gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale.git
+    commands:
+      # Read the Tailscale version that's about to be (or was) built.
+      - TS=$(sed -n 's/^ARG TAILSCALE_VERSION=//p' Dockerfile)
+      - 'echo "Tailscale version in Dockerfile: $TS"'
+      - test -n "$TS" || { echo "could not parse TAILSCALE_VERSION"; exit 1; }
+      - TAG="$TS-mt.1"
+      # Make sure we have all tags locally (clone may be shallow / partial).
+      - git fetch --tags --quiet
+      # If ANY release tag already exists for this Tailscale version, the
+      # automatic mt.1 has already happened (or a manual mt.N supersedes it):
+      # do nothing. Only the FIRST sighting of a new Tailscale version tags.
+      - |
+        if git tag --list "$TS-mt.*" | grep -q .; then
+          echo "Release tag(s) already exist for $TS; nothing to auto-tag."
+          exit 0
+        fi
+      - echo "No release tag for $TS yet; creating $TAG"
+      - git config user.name "Woodpecker CI"
+      - git config user.email "ci@lumpiasty.xyz"
+      - GIT_TOKEN=$(cat /woodpecker/git_token)
+      # Annotated tag at the current commit.
+      - git tag -a "$TAG" -m "Automated release for Tailscale $TS"
+      - git push "https://woodpecker:$GIT_TOKEN@gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale.git" "$TAG"
+      - echo "Pushed $TAG"

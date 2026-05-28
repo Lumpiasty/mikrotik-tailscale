@@ -1,0 +1,58 @@
+# Build and publish a multi-arch release to the Gitea container registry.
+#
+# Triggered by pushing a v<ts>-mt.<N> tag:
+#   - v<ts>-mt.1 is created automatically by .woodpecker/release-tag.yaml on a
+#     Tailscale bump.
+#   - v<ts>-mt.2, mt.3, ... are created manually for fixes/changes.
+#
+# Publishes a SINGLE multi-arch manifest (amd64 + arm64 + arm/v7) so RouterOS
+# pulls the right arch automatically. Tags pushed:
+#   :<full tag>   e.g. v1.98.3-mt.1   (immutable, for rollback/audit)
+#   :stable                            (moving; what the router tracks)
+#
+# The image is stamped with org.opencontainers.image.version=<full tag> via the
+# OCI_VERSION build arg; the router compares that label to decide updates.
+#
+# Registry credentials live in OpenBao (secret/container-registry, keys
+# REGISTRY_USERNAME / REGISTRY_PASSWORD). The first step fetches them with the
+# same AppRole used by Renovate and writes them as PLUGIN_USERNAME /
+# PLUGIN_PASSWORD into an env file that the buildx plugin loads via env_file.
+# This keeps all secrets in OpenBao (no Woodpecker secret duplication).
+
+when:
+  - event: tag
+    ref: refs/tags/v*-mt.*
+
+steps:
+  - name: Get registry creds from OpenBao
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+      ROLE_ID:
+        from_secret: renovate_role_id
+      SECRET_ID:
+        from_secret: renovate_secret_id
+    commands:
+      - bao write -field token auth/approle/login
+          role_id=$ROLE_ID
+          secret_id=$SECRET_ID > /woodpecker/.vault_id
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      # Write creds in the env-file format the buildx plugin understands.
+      # PLUGIN_USERNAME / PLUGIN_PASSWORD map to the plugin's username/password.
+      - 'printf "PLUGIN_USERNAME=%s\n" "$(bao kv get -mount secret -field REGISTRY_USERNAME container-registry)" > /woodpecker/registry.env'
+      - 'printf "PLUGIN_PASSWORD=%s\n" "$(bao kv get -mount secret -field REGISTRY_PASSWORD container-registry)" >> /woodpecker/registry.env'
+
+  - name: Build and push multi-arch image
+    image: woodpeckerci/plugin-docker-buildx:5.2.2
+    privileged: true
+    settings:
+      registry: gitea.lumpiasty.xyz
+      repo: gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale
+      platforms: linux/amd64,linux/arm64,linux/arm/v7
+      tags:
+        - ${CI_COMMIT_TAG}
+        - stable
+      build_args:
+        - OCI_VERSION=${CI_COMMIT_TAG}
+      # Credentials (PLUGIN_USERNAME / PLUGIN_PASSWORD) come from OpenBao.
+      env_file: /woodpecker/registry.env

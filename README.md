@@ -287,6 +287,56 @@ docker buildx build --platform linux/arm64 \
   --load -t mikrotik-tailscale:arm64 .
 ```
 
+## Versioning & releases
+
+Released images are versioned as:
+
+```
+v<TAILSCALE_VERSION>-mt.<N>
+```
+
+e.g. `v1.98.3-mt.1`. The two parts mean:
+
+- **`v<TAILSCALE_VERSION>`** — the bundled Tailscale version (the "what's
+  inside" identifier), taken from `ARG TAILSCALE_VERSION` in the Dockerfile.
+- **`mt.<N>`** — the local revision. It only changes on a *meaningful* release,
+  never on a build-system-only rebuild.
+
+### When a release happens
+
+| Trigger | Result |
+|---|---|
+| Renovate bumps `TAILSCALE_VERSION` (merged to `main`) | CI **auto-creates** git tag `v<new>-mt.1` → image published |
+| You make a meaningful fix/change on the current Tailscale version | **You** create the next tag manually (`v<ts>-mt.2`, `mt.3`, …) → image published |
+| Dependency-only bump (Go / Alpine / busybox / Dockerfile syntax) | **No release.** Rides along with the next Tailscale bump or manual tag |
+
+So routers only ever see a new release for Tailscale bumps or your deliberate
+fixes — build-system churn doesn't trigger updates.
+
+Each published image is stamped with `org.opencontainers.image.version` equal to
+its full tag; this is the value the MikroTik update job compares against the
+registry to decide whether to recreate the container.
+
+### How it's wired (Woodpecker)
+
+- **`.woodpecker/release-tag.yaml`** — on push to `main`, parses
+  `TAILSCALE_VERSION`; if no `v<ts>-mt.*` tag exists yet, creates and pushes
+  `v<ts>-mt.1` (using the Gitea token from OpenBao). It never creates `mt.2+`.
+- **`.woodpecker/release.yaml`** — on a `v*-mt.*` tag push, builds the
+  multi-arch manifest (amd64 + arm64 + arm/v7) and pushes it to
+  `gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale` as both `:<tag>` and
+  `:stable`. Registry creds come from OpenBao (`secret/container-registry`).
+
+### Cutting a manual release
+
+```sh
+# fix something, commit to main, then:
+git tag -a v1.98.3-mt.2 -m "Fix X"
+git push origin v1.98.3-mt.2
+```
+
+The tag push triggers the build+publish automatically.
+
 ## Dependency pinning & automated updates
 
 All upstream dependencies are version-pinned for reproducible builds:
