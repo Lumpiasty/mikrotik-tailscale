@@ -265,21 +265,67 @@ Several measures are in place to avoid wearing out internal flash:
 
 ## Upgrading
 
-Update the `TAILSCALE_VERSION` build arg and rebuild the image. The feature
-allowlist in the Dockerfile carries forward automatically — any new
-`ts_omit_*` tags introduced in the new version will be omitted by default.
+Version bumps (Tailscale, busybox, base image digests) are normally proposed
+automatically via Renovate — see
+[Dependency pinning & automated updates](#dependency-pinning--automated-updates).
+Merge the Renovate PR, then rebuild and redeploy.
+
+The feature allowlist in the Dockerfile carries forward automatically across
+Tailscale versions — any new `ts_omit_*` tags introduced in a new release will
+be omitted by default.
+
+To bump manually, edit `ARG TAILSCALE_VERSION` in the `Dockerfile` (so the pin
+stays in version control) and rebuild:
 
 ```sh
-TAG=v1.99.0 ./build.sh --tar      # rebuild all arches with the new version
-# or, single arch:
+./build.sh --tar      # rebuild all arches at the pinned version
+# or, override at build time without editing the Dockerfile:
 docker buildx build --platform linux/arm64 \
-  --build-arg TAILSCALE_VERSION=v1.99.0 \
-  --load -t mikrotik-tailscale:v1.99.0-arm64 .
+  --build-arg TAILSCALE_VERSION=v1.100.0 \
+  --load -t mikrotik-tailscale:arm64 .
+```
+
+## Dependency pinning & automated updates
+
+All upstream dependencies are version-pinned for reproducible builds:
+
+| Dependency | Where | Pinned form |
+|---|---|---|
+| Go toolchain | `Dockerfile` `FROM golang:…` | tag + `@sha256` digest |
+| Alpine (busybox build base) | `Dockerfile` `FROM alpine:…` | tag + `@sha256` digest |
+| Tailscale | `Dockerfile` `ARG TAILSCALE_VERSION` | git release tag |
+| busybox | `Dockerfile` `ARG BUSYBOX_VERSION` | release version |
+| Renovate runner | `.woodpecker/renovate.yaml` `image:` | tag |
+
+Updates are proposed automatically by [Renovate](https://docs.renovatebot.com/),
+run **self-hosted** from a Woodpecker cron pipeline (Woodpecker has no native
+Renovate support):
+
+- `renovate.json` — repository rules. All dependencies follow the latest
+  upstream releases (including major versions); each bump arrives as its own PR
+  that the multi-arch build validates before you merge. Base image tags also
+  get their `@sha256` digests refreshed via `pinDigests`. The one special rule:
+  - `tailscale` only follows **stable** releases — Tailscale uses even minor
+    versions for stable (`v1.98.x`) and odd for unstable (`v1.99.x`), so the
+    rule filters to even minors.
+- `.woodpecker/renovate.yaml` — the scheduled job that runs `renovate/renovate`
+  against this repo.
+
+```sh
+# Renovate repo config
+docker run --rm -e RENOVATE_CONFIG_TYPE=repo -v "$PWD":/work -w /work \
+  --entrypoint renovate-config-validator renovate/renovate
+
+# Woodpecker pipeline
+docker run --rm -v "$PWD":/work -w /work \
+  woodpeckerci/woodpecker-cli:v3 lint .woodpecker/renovate.yaml
 ```
 
 ## References
 
 - [Tailscale: Smaller binaries for embedded devices](https://tailscale.com/docs/how-to/set-up-small-tailscale)
+- [Renovate self-hosting](https://docs.renovatebot.com/getting-started/running/)
+- [Woodpecker cron jobs](https://woodpecker-ci.org/docs/usage/cron)
 - [MikroTik Container documentation](https://help.mikrotik.com/docs/display/ROS/Container)
 - [Tailscale subnet routers](https://tailscale.com/kb/1019/subnets)
 - [Tailscale exit nodes](https://tailscale.com/kb/1103/exit-nodes)

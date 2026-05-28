@@ -19,8 +19,9 @@
 # =============================================================================
 # Stage 1: Build Tailscale combined binary (cross-compiled, runs natively)
 # =============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:91eda9776261207ea25fd06b5b7fed8d397dd2c0a283e77f2ab6e91bfa71079d AS builder
 
+# renovate: datasource=github-releases depName=tailscale packageName=tailscale/tailscale
 ARG TAILSCALE_VERSION=v1.98.3
 
 # Provided automatically by buildx for the target platform.
@@ -137,8 +138,9 @@ RUN upx --lzma --best /out/tailscale.combined
 # This stage runs on the TARGET platform (no --platform override): gcc then
 # produces native target-arch binaries directly. Under buildx this is
 # transparently emulated via binfmt/QEMU for non-native targets.
-FROM alpine:3.21 AS busybox
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS busybox
 
+# renovate: datasource=docker depName=busybox versioning=docker
 ARG BUSYBOX_VERSION=1.37.0
 
 RUN apk add --no-cache build-base linux-headers wget bzip2 perl upx

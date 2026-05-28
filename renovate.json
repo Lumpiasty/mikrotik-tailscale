@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "labels": ["dependencies"],
+  "rebaseWhen": "behind-base-branch",
+  "dockerfile": {
+    "pinDigests": true
+  },
+  "packageRules": [
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["tailscale/tailscale"],
+      "description": "TAILSCALE_VERSION ARG: only stable releases. Tailscale uses EVEN minor versions for stable (v1.98.x); ODD minors (v1.99.x) are unstable, so filter to even minors and ignore pre-releases.",
+      "extractVersion": "^v(?<version>\\d+\\.\\d+\\.\\d+)$",
+      "allowedVersions": "/^\\d+\\.\\d*[02468]\\.\\d+$/",
+      "ignoreUnstable": true
+    }
+  ]
+}

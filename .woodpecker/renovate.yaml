@@ -1,0 +1,79 @@
+# Self-hosted Renovate, run by Woodpecker on a schedule.
+#
+# Woodpecker has no native Renovate support, so we run the official
+# renovate/renovate image as a one-shot job. The repo-level rules live in
+# ./renovate.json; the GLOBAL/self-hosted settings (which platform, which repo,
+# the API token) are provided here via environment so renovate.json stays a
+# clean, portable repository config.
+#
+# SETUP (one-time):
+#   1. In Gitea, create a bot user (e.g. "renovate") with write access to this
+#      repo, and generate a personal access token with at least:
+#         repo (read/write), issue (read/write), pull-request (read/write)
+#   2. In Woodpecker repo settings -> Secrets, add a secret:
+#         name:  renovate_token
+#         value: <the Gitea PAT>
+#      Make sure it is available to the "cron" event.
+#   3. In Woodpecker repo settings -> Crons, add a cron:
+#         name:     renovate
+#         branch:   main            # branch whose pipeline config is used
+#         schedule: "@daily"        # or e.g. "0 6 * * 1" (Mondays 06:00)
+#
+# The step below only runs for the "cron" event named "renovate", so normal
+# pushes/PRs never trigger Renovate.
+
+when:
+  - event: cron
+    cron: renovate
+
+skip_clone: true
+
+steps:
+  - name: Get renovate token from OpenBao
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+      ROLE_ID:
+        from_secret: renovate_role_id
+      SECRET_ID:
+        from_secret: renovate_secret_id
+    commands:
+      - bao write -field token auth/approle/login
+          role_id=$ROLE_ID
+          secret_id=$SECRET_ID > /woodpecker/.vault_id
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao kv get -mount secret -field RENOVATE_TOKEN renovate > /woodpecker/renovate_token
+      - bao kv get -mount secret -field GITHUB_COM_TOKEN renovate > /woodpecker/github_com_token
+  - name: renovate
+    # Renovate's built-in "woodpecker" manager tracks this image automatically.
+    image: renovate/renovate:43.194.0
+    environment:
+      # --- platform / target ---
+      RENOVATE_PLATFORM: gitea
+      # Gitea API endpoint. Override to match your instance.
+      RENOVATE_ENDPOINT: https://gitea.lumpiasty.xyz/api/v1
+      # Only operate on this repository.
+      RENOVATE_AUTODISCOVER: "false"
+      RENOVATE_REPOSITORIES: ${CI_REPO}
+      # Use the committed renovate.json; don't open an onboarding PR.
+      RENOVATE_ONBOARDING: "false"
+      RENOVATE_REQUIRE_CONFIG: "optional"
+      # Git identity for the branches/commits Renovate creates.
+      RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate@localhost>"
+      # GitHub token (read-only, no repo access) lets Renovate fetch release
+      # notes / changelogs and avoids GitHub API rate limits for the
+      # github-releases datasource (tailscale). Optional but recommended.
+      LOG_LEVEL: info
+    # Load tokens from OpenBao (written to /woodpecker by the first step) and
+    # run renovate.
+    commands:
+      - export RENOVATE_TOKEN=$(cat /woodpecker/renovate_token)
+      - export GITHUB_COM_TOKEN=$(cat /woodpecker/github_com_token)
+      - /usr/local/sbin/renovate-entrypoint.sh renovate
+  - name: Invalidate OpenBao token
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+    commands:
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao write -f auth/token/revoke-self
