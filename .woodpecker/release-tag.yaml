@@ -61,3 +61,10 @@ steps:
       - git tag -a "$TAG" -m "Automated release for Tailscale $TS"
       - git push "https://woodpecker:$GIT_TOKEN@gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale.git" "$TAG"
       - echo "Pushed $TAG"
+  - name: Invalidate OpenBao token
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+    commands:
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao write -f auth/token/revoke-self

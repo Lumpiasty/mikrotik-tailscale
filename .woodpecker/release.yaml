@@ -56,3 +56,10 @@ steps:
         - OCI_VERSION=${CI_COMMIT_TAG}
       # Credentials (PLUGIN_USERNAME / PLUGIN_PASSWORD) come from OpenBao.
       env_file: /woodpecker/registry.env
+  - name: Invalidate OpenBao token
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+    commands:
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao write -f auth/token/revoke-self
