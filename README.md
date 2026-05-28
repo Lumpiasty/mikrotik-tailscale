@@ -1,5 +1,7 @@
 # mikrotik-tailscale
 
+[<img src="https://woodpecker.lumpiasty.xyz/api/badges/3/status.svg" alt="Pipeline status">](https://woodpecker.lumpiasty.xyz/repos/3)
+
 A minimal Tailscale Docker image built for MikroTik routers running
 [Container](https://help.mikrotik.com/docs/display/ROS/Container). Fits in
 16 MB internal flash. Built from source with only router-relevant features
