@@ -1,0 +1,26 @@
+# Build validation for pull requests (and pushes to main).
+#
+# Builds the full multi-arch image but does NOT push it anywhere — it only
+# proves the Dockerfile still builds for every supported architecture. This is
+# the gate Renovate automerge waits on: a dependency bump that breaks the build
+# fails this check and will NOT be automerged (and therefore never reaches
+# :stable or the routers).
+#
+# Reports pass/fail status back to Gitea, so it shows up as a required check on
+# the PR.
+
+when:
+  - event: pull_request
+  - event: push
+    branch: main
+
+steps:
+  - name: Build all arches (no push)
+    image: woodpeckerci/plugin-docker-buildx:5.2.2
+    privileged: true
+    settings:
+      repo: mikrotik-tailscale
+      platforms: linux/amd64,linux/arm64,linux/arm/v7
+      dry-run: true
+      build_args:
+        - OCI_VERSION=ci-${CI_COMMIT_SHA}

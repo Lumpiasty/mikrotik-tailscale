@@ -7,10 +7,12 @@
   ],
   "labels": ["dependencies"],
   "rebaseWhen": "behind-base-branch",
-  "dockerfile": {
-    "pinDigests": true
-  },
   "packageRules": [
+    {
+      "matchManagers": ["dockerfile"],
+      "description": "Keep base-image tags pinned to a digest.",
+      "pinDigests": true
+    },
     {
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["tailscale/tailscale"],
@@ -18,6 +20,28 @@
       "extractVersion": "^v(?<version>\\d+\\.\\d+\\.\\d+)$",
       "allowedVersions": "/^\\d+\\.\\d*[02468]\\.\\d+$/",
       "ignoreUnstable": true
+    },
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["tailscale/tailscale"],
+      "description": "Automerge all stable Tailscale releases (patch AND minor) once the PR build passes.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["golang", "alpine", "busybox"],
+      "description": "Automerge PATCH-only bumps of build components (Go/Alpine/busybox) once the PR build passes; review minor/major manually.",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest", "pinDigest"],
+      "description": "Automerge base-image digest refreshes (same tag, new sha256) once the PR build passes.",
+      "automerge": true
     }
-  ]
+  ],
+  "automergeType": "pr",
+  "platformAutomerge": true
 }

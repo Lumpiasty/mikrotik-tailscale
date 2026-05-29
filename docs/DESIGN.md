@@ -324,14 +324,35 @@ run **self-hosted** from a Woodpecker cron pipeline (Woodpecker has no native
 Renovate support):
 
 - `renovate.json` — repository rules. All dependencies follow the latest
-  upstream releases (including major versions); each bump arrives as its own PR
-  that the multi-arch build validates before you merge. Base image tags also
-  get their `@sha256` digests refreshed via `pinDigests`. The one special rule:
+  upstream releases; each bump arrives as its own PR. Base image tags also get
+  their `@sha256` digests refreshed via `pinDigests`. Notable rules:
   - `tailscale` only follows **stable** releases — Tailscale uses even minor
     versions for stable (`v1.98.x`) and odd for unstable (`v1.99.x`), so the
     rule filters to even minors.
 - `.woodpecker/renovate.yaml` — the scheduled job that runs `renovate/renovate`
   against this repo.
+- `.woodpecker/pr-build.yaml` — builds all three arches (no push) on every PR
+  and reports status to Gitea. This is the gate for automerge.
+
+### Automerge policy
+
+These updates **automerge** once the PR build passes — they reach `:stable`
+(and the routers) without manual review:
+
+| Update | Automerge? | Why |
+|---|---|---|
+| Tailscale stable (patch **and** minor) | ✅ | the point of the project; the PR build catches breakage |
+| Go / Alpine / busybox **patch** | ✅ | bugfix-only, build-internal |
+| Base-image **digest** refresh (same tag) | ✅ | content refresh, no version change |
+| Go / Alpine / busybox **minor/major** | ❌ manual | larger toolchain/base changes warrant review |
+| Renovate runner, syntax frontend | ❌ manual | tooling — review deliberately |
+
+**Important:** automerge depends on the PR build being a **required status
+check** in Gitea branch protection. The PR build only proves the image *builds*
+for all arches — it does not run the daemon, so a runtime regression in a new
+Tailscale release could still be automerged. That is an accepted trade-off for
+the convenience of unattended Tailscale updates; if a release misbehaves, roll
+back by re-tagging the previous `v…-mt.N` (the immutable tags are kept).
 
 Validate the configs locally:
 
