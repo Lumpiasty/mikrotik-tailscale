@@ -117,6 +117,17 @@ RUN mkdir -p /out && \
 # Expected: ~14 MB raw → ~3.8 MB compressed (with -gcflags=all=-l)
 RUN upx --lzma --best /out/tailscale.combined
 
+# Lay out the final /usr/local/bin HERE (binary + argv[0] symlinks) so the final
+# stage can bring it in with a SINGLE COPY layer. Creating the symlinks with a
+# `RUN` in the final scratch stage instead would force overlayfs to copy-up the
+# whole directory — duplicating the ~3 MB binary into another layer and roughly
+# doubling the extracted on-disk size on RouterOS (overlay layers are extracted
+# separately). Building it in one place keeps it to one copy.
+RUN mkdir -p /out/usrlocalbin && \
+    mv /out/tailscale.combined /out/usrlocalbin/tailscale.combined && \
+    ln -s /usr/local/bin/tailscale.combined /out/usrlocalbin/tailscale && \
+    ln -s /usr/local/bin/tailscale.combined /out/usrlocalbin/tailscaled
+
 # =============================================================================
 # Stage 2: Custom minimal busybox
 # =============================================================================
@@ -211,12 +222,10 @@ COPY --from=busybox /rootfs/ /
 # CA certificates (needed to reach Tailscale coordination server)
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Combined Tailscale binary
-COPY --from=builder /out/tailscale.combined /usr/local/bin/tailscale.combined
-
-# Symlinks: combined binary behavior switches on argv[0]
-RUN ["/bin/busybox", "ln", "-s", "/usr/local/bin/tailscale.combined", "/usr/local/bin/tailscale"]
-RUN ["/bin/busybox", "ln", "-s", "/usr/local/bin/tailscale.combined", "/usr/local/bin/tailscaled"]
+# Combined Tailscale binary + its argv[0] symlinks, in a single layer (built in
+# the builder stage to avoid overlayfs copy-up duplicating the binary — see the
+# builder stage comment).
+COPY --from=builder /out/usrlocalbin/ /usr/local/bin/
 
 # Ensure /usr/local/bin and busybox dirs are on PATH for interactive shells
 ENV PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
