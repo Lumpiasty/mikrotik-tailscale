@@ -171,7 +171,7 @@ RUN mkdir -p /out/usrlocalbin && \
 # This stage runs on the TARGET platform (no --platform override): gcc then
 # produces native target-arch binaries directly. Under buildx this is
 # transparently emulated via binfmt/QEMU for non-native targets.
-FROM alpine:3.21.7@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d AS busybox
+FROM alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS busybox
 
 # renovate: datasource=docker depName=busybox versioning=docker
 ARG BUSYBOX_VERSION=1.37.0
