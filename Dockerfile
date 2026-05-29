@@ -63,12 +63,29 @@ WORKDIR /src/tailscale
 #   portmapper          — NAT-PMP / PCP / UPnP to punch through upstream NAT
 #   listenrawdisco      — raw sockets for more robust disco/NAT-traversal
 #   health              — health subsystem required by 'tailscale status'
-#   cachenetmap         — cache netmap on disk for faster reconnect after reboot
-#                         IMPORTANT: mount cache dir on tmpfs, not internal flash
 #   iptables            — Linux iptables support for routing rules
 #
 # Everything else remains omitted, including (rationale):
-#   clientupdate  — updates managed via Docker image rebuild
+#   clientupdate  — DELIBERATELY removed. The built-in updater would download
+#                   the FULL official upstream tailscale binary (tens of MB,
+#                   with all features) directly onto the device, defeating the
+#                   entire point of this minimal build and risking filling the
+#                   16 MB flash. It also can't update a binary baked into a
+#                   read-only container image. Updates are instead delivered by
+#                   rebuilding/republishing this image (CI) and pulling the new
+#                   image only when it actually changed (see the RouterOS
+#                   update script). This keeps the on-device footprint minimal
+#                   and the update path controlled, reproducible, and flash-safe.
+#   cachenetmap   — DELIBERATELY omitted. It ONLY persists the netmap to disk so
+#                   the node can come online from the last-known config after a
+#                   COLD START while the control plane is simultaneously
+#                   unreachable. The in-memory netmap is NOT gated by this tag:
+#                   a running daemon that loses its control connection keeps its
+#                   map and can still reach known peers (data path is direct
+#                   WireGuard/DERP, not via control). The only loss is the narrow
+#                   reboot-during-control-outage case. In exchange we avoid disk
+#                   writes on every netmap delta (frequent on busy tailnets),
+#                   which is exactly the flash wear we want to avoid.
 #   logtail       — no persistent log writes to flash; also pass
 #                   --no-logs-no-support at runtime
 #   netstack+gro  — userspace networking; router uses kernel TUN
@@ -87,7 +104,6 @@ RUN mkdir -p /out && \
           -e 's/ts_omit_portmapper,\{0,1\}//g' \
           -e 's/ts_omit_listenrawdisco,\{0,1\}//g' \
           -e 's/ts_omit_health,\{0,1\}//g' \
-          -e 's/ts_omit_cachenetmap,\{0,1\}//g' \
           -e 's/ts_omit_iptables,\{0,1\}//g' \
           -e 's/,$//' \
     ) && \
@@ -235,11 +251,10 @@ ENV PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 #
 #   /var/lib/tailscale       — persistent state (authkey, node identity)
 #                              → bind-mount to MikroTik disk storage
-#                              → survives reboots, written infrequently
-#
-#   /var/lib/tailscale/cache — netmap cache (cachenetmap feature)
-#                              → mount as tmpfs so it never touches flash
-#                              → speeds up reconnect but is recreatable
+#                              → survives reboots, written infrequently (only on
+#                                auth / key rotation / prefs change)
+#                              → netmap is NOT cached to disk (cachenetmap is
+#                                omitted), so this dir sees no per-netmap writes
 #
 #   /var/run/tailscale       — runtime socket dir
 #                              → tmpfs, lost on reboot (expected)
@@ -255,7 +270,8 @@ ENTRYPOINT ["/usr/local/bin/tailscaled"]
 #                         to write log files)
 #   --state               persistent node identity / authkey storage
 #   --socket              CLI communication socket (on tmpfs)
-#   --statedir            where cache and other runtime files land
+#   --statedir            var root (derpmap cache, certs, etc.); no netmap
+#                         disk cache here since cachenetmap is omitted
 CMD ["--no-logs-no-support", \
      "--state=/var/lib/tailscale/tailscaled.state", \
      "--socket=/var/run/tailscale/tailscaled.sock", \
