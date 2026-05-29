@@ -28,10 +28,12 @@ Measured flattened rootfs for the arm64 image:
 | arm64  | ~3.5 MB |
 | arm/v7 | ~3.5 MB |
 
-> The extracted rootfs must contain the binary only **once**. If you measure
-> ~7 MB on the device with `du -sx /`, the Dockerfile has reintroduced an
-> overlayfs copy-up — see
-> [Avoiding overlayfs layer duplication](#avoiding-overlayfs-layer-duplication).
+On a deployed RouterOS device the container consumes **~3.7 MiB of flash**
+(measured by `free-hdd-space` delta). Note that `du` *inside* the container
+reports roughly double that (~7 MB) — that is RouterOS block-allocation
+rounding, **not** real usage or duplication; see
+[Avoiding overlayfs layer duplication](#avoiding-overlayfs-layer-duplication)
+for how to measure correctly.
 
 The binary is built with Tailscale's `--extra-small` feature tag set as the
 baseline. Features are opted in explicitly — any new feature Tailscale adds
@@ -73,32 +75,45 @@ the Tailscale binary.
 
 ### Avoiding overlayfs layer duplication
 
-A subtle but important detail: **the final image must not run a `RUN` that
-mutates a directory already populated by an earlier layer**, or the extracted
-on-disk size roughly doubles for that directory's contents.
-
-RouterOS Container uses overlayfs and stores the **extracted** layers on disk.
-Each Dockerfile instruction is its own layer. If `/usr/local/bin/` is created by
-a `COPY` (containing the ~3 MB `tailscale.combined`) and a later `RUN ln -s …`
-adds a symlink *inside that same directory*, overlayfs performs a **copy-up**:
-it copies the entire `/usr/local/bin/` directory — including the 3 MB binary —
-into the new layer's upper dir. RouterOS then extracts both copies to flash, so
-`du -sx /` reports ~7 MB instead of ~3.4 MB for a directory whose only real file
-is 3 MB. (The compressed image hides this — compression dedupes identical blocks
-— which is why it only shows up when you measure the *extracted* rootfs on the
-device.)
+Best practice for the final image: **don't run a `RUN` that mutates a directory
+already populated by an earlier layer.** Each Dockerfile instruction is its own
+layer; if `/usr/local/bin/` is created by a `COPY` (containing the ~3 MB
+`tailscale.combined`) and a later `RUN ln -s …` adds a symlink *inside that same
+directory*, overlayfs performs a **copy-up** of the entire directory — including
+the 3 MB binary — into the new layer. The binary then physically exists in two
+image layers.
 
 The fix: assemble `/usr/local/bin/` completely in the **builder** stage (binary
 + both `argv[0]` symlinks) and bring it into the final image with a **single
 `COPY` layer**, never mutating it afterwards. The Dockerfile does this; don't
-reintroduce a post-`COPY` `RUN` against that path.
-
-To verify the extracted footprint on a deployed router:
+reintroduce a post-`COPY` `RUN` against that path. You can confirm the published
+image carries the binary in exactly one layer:
 
 ```
-/container/shell [find where name=tailscale]
-du -sx /        # expect ~3500 KiB (1 KiB blocks), not ~7000
+docker save <image> -o img.tar && tar xf img.tar -C img/
+# then grep each blob layer for usr/local/bin/tailscale.combined — it must
+# appear in exactly ONE layer.
 ```
+
+Note: this is about keeping the *image* clean. It does **not** change what `du`
+reports on the device — see the measurement note below.
+
+To verify the on-flash footprint on a deployed router, use the **free-space
+delta**, not `du`:
+
+```
+/system/resource/print     # note free-hdd-space before and after adding the container
+```
+
+The container should consume **~3.7 MiB** of flash (e.g. 94.6 → 90.9 MiB free).
+
+Do **not** trust `du` inside the container for this. Busybox `du` reports
+*allocated blocks*, and RouterOS's container store rounds a ~3 MB file up to
+~6 MB of blocks — so `du -sx /` reports ~7 MB even though real flash use is
+~3.7 MB. `ls -la /usr/local/bin` confirms the binary's true content size
+(~3.1 MB) and that it is a single file with two symlinks (no duplication).
+The image itself carries the binary in exactly one layer (verified at the blob
+level); the inflation is purely the filesystem's block accounting.
 
 ## Architecture support
 
