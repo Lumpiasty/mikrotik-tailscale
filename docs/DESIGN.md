@@ -127,6 +127,7 @@ that's a separate build, not just a `--platform` change.
 | health | Powers `tailscale status` output |
 | iptables | Linux iptables support for routing rules |
 | osrouter | Configure kernel network stack and routing tables |
+| unixsocketidentity | **Required** — without it the localapi denies every CLI call with "access denied" ([tailscale#17873](https://github.com/tailscale/tailscale/issues/17873)) |
 
 ## Features intentionally omitted
 

@@ -64,6 +64,11 @@ WORKDIR /src/tailscale
 #   listenrawdisco      — raw sockets for more robust disco/NAT-traversal
 #   health              — health subsystem required by 'tailscale status'
 #   iptables            — Linux iptables support for routing rules
+#   unixsocketidentity  — REQUIRED for the CLI to talk to the daemon. Without it,
+#                         the localapi can't verify a request arrived over the
+#                         trusted unix socket, so PermitRead/PermitWrite are
+#                         always false and EVERY CLI call (status, up, set, ...)
+#                         returns "access denied" (tailscale/tailscale#17873).
 #
 # Everything else remains omitted, including (rationale):
 #   clientupdate  — DELIBERATELY removed. The built-in updater would download
@@ -105,6 +110,7 @@ RUN mkdir -p /out && \
           -e 's/ts_omit_listenrawdisco,\{0,1\}//g' \
           -e 's/ts_omit_health,\{0,1\}//g' \
           -e 's/ts_omit_iptables,\{0,1\}//g' \
+          -e 's/ts_omit_unixsocketidentity,\{0,1\}//g' \
           -e 's/,$//' \
     ) && \
     echo "Build tags: ${TAGS}" && \
