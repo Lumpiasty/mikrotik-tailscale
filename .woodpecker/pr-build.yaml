@@ -16,7 +16,7 @@ when:
 
 steps:
   - name: Build all arches (no push)
-    image: woodpeckerci/plugin-docker-buildx:5.2.2
+    image: woodpeckerci/plugin-docker-buildx:6.1.0
     privileged: true
     settings:
       repo: mikrotik-tailscale
