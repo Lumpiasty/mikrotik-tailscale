@@ -7,6 +7,8 @@ A minimal Tailscale Docker image built for MikroTik routers running
 16 MB internal flash. Built from source with only router-relevant features
 included.
 
+> Disclaimer: This project has been largely vibe-coded, but I stand behind design and implementation choices made.
+
 - **~4 MB** extracted rootfs (`FROM scratch` + UPX'd Tailscale binary + a custom
   static busybox debug shell).
 - **Multi-arch**: amd64, arm64, arm/v7 — one tag, RouterOS pulls the right one.
@@ -15,6 +17,23 @@ included.
   changed.
 - **Flash-wear conscious**: minimal persistent state, no netmap disk-caching,
   tmpfs for scratch and runtime.
+
+## Motivation
+
+There is no built-in Tailscale integration in MikroTik, and other solutions
+feel underwhelming. I've used Fluent-networks' tailscale-mikrotik until now,
+but that basically forced me to connect external storage to my router
+just to use Tailscale. This approach, while works, is fragile, wasteful
+and overcomplicated, so I decided to do better one myself.
+
+| | **This project** | Fluent-networks/tailscale-mikrotik |
+|---|---|---|
+| Size | **~4 MB** | ~106 MB |
+| Size reduction technique | **Minimal container with custom Tailscale and Busybox builds, compressed by UPX** | Alpine Linux base, Tailscale binary compressed by UPX on build, but auto-update completely nullifies that on first launch |
+| Update mechanism | **Automatically released optimized container images with new Tailscale versions, scheduled script updating deployment on new version** | None, opt-in Tailscale built-in auto-update downloading official binaries |
+| Flash wear | **Write-heavy functionality compiled out, suitable for low-endurance flash chips** | High, constant netmap cache updates |
+| Stability | **Immutable container** | Tailscale app can update on its own |
+| Features | **Only router-useful Tailscale features compiled, Busybox providing shell and utils** | Full tailscale, OpenSSH server, Bash, IPTables |
 
 ## Documentation
 
