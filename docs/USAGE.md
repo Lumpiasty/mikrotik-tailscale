@@ -10,64 +10,58 @@ reasoning behind these choices, see [DESIGN.md](DESIGN.md).
 ## Deploy on MikroTik (RouterOS)
 
 Verified on RouterOS 7.21.2 (arm64, CRS418). Commands are grouped into
-copy-paste blocks; **only the values marked `CHANGE ME` need editing**.
+copy-paste blocks, defaults should fit most configurations.
 
 > Because the image has no built-in updater (the `clientupdate` feature is
 > [intentionally compiled out](DESIGN.md#why-the-built-in-updater-is-removed)),
-> updates are handled by a small script that only re-pulls when the published
-> image actually changed — see [step 7](#7-enable-automatic-updates).
+> updates are handled by a small script that recreates container when
+> the update is published — see [step 7](#7-enable-automatic-updates).
 
 ### 0. Prerequisites
 
-- RouterOS 7.x with the **container** package installed.
-- Container mode enabled (needs physical access — press reset / cold-boot when
-  prompted):
+- RouterOS >7.13 with the **container** package installed.
+- Container mode enabled ([documentation](https://manual.mikrotik.com/docs/System%20Information%20and%20Utilities/device-mode/#changing-mode-of-device-mode)):
 
   ```
   /system/device-mode/update container=yes
   ```
 
-- A Tailscale **auth key** from the admin console
-  (**Settings → Keys**, reusable, optionally tagged). You'll use it in step 6.
+### 1. Networking (veth + routing)
 
-### 1. Networking (veth + bridge + NAT)
-
-Gives the container an internal IP and outbound internet via NAT. Pick a subnet
-that doesn't clash with your LAN.
+Gives the container an internal IP and configures routing to the tailnet.
+Pick a subnet that doesn't clash with your LAN.
 
 ```
 /interface/veth/add name=veth-tailscale address=172.20.0.2/24 gateway=172.20.0.1
 /interface/bridge/add name=containers
 /ip/address/add address=172.20.0.1/24 interface=containers
 /interface/bridge/port/add bridge=containers interface=veth-tailscale
-/ip/firewall/nat/add chain=srcnat action=masquerade src-address=172.20.0.0/24
+/ip/route/add dst-address=100.64.0.0/10 gateway=172.20.0.2 comment=Tailnet
 ```
+
+If you want the router to have access to subnets shared by other tailscale nodes,
+add route for each one.
+
+```
+/ip/route/add dst-address=[subnet CIDR] gateway=172.20.0.2 comment="Another network via tailscale"
+```
+
+If you want to share your LAN via tailscale, add it as an advertised route in
+[step 5](#5-authenticate). You may also need additional firewall configuration
+to accept connections to or from tailnet if you have one configured.
+You should not need any additional NAT rules.
 
 ### 2. Extraction scratch dir (tmpfs)
 
 Put the image extraction scratch dir on **tmpfs** (RAM) so the pull/extract
-never writes to flash:
+happen in RAM and doesn't fill up or wear out flash:
 
 ```
 /disk/add type=tmpfs tmpfs-max-size=256M slot=tmp
 /container/config/set tmpdir=tmp
 ```
 
-> **No `registry-url` change needed.** This guide puts the full registry host in
-> `remote-image` (step 5), and RouterOS pulls directly from that host — the
-> global `registry-url` is ignored when the image reference includes a host.
-> This is intentional: it leaves your existing `registry-url` untouched, so
-> other containers (e.g. ones pulling from Docker Hub or ghcr.io) keep working,
-> and multiple registries can be used side by side.
-
-### 3. Authentication note (no env needed)
-
-This image runs `tailscaled` directly and does **not** bundle Tailscale's
-`containerboot` wrapper, so the `TS_AUTHKEY` environment variable is **not**
-read automatically. You authenticate with `tailscale up --authkey=...` after the
-container starts (step 6) — this keeps the image minimal and needs no env list.
-
-### 4. Persistent state mount (the only thing on flash)
+### 3. Persistent state mount (the only thing on flash)
 
 Only the tiny `tailscaled.state` (node identity / key) needs to persist. Mount
 just that directory:
@@ -76,14 +70,7 @@ just that directory:
 /container/mounts/add list=tailscale_state src=tailscale/state dst=/var/lib/tailscale
 ```
 
-`src=tailscale/state` is on internal storage. This holds `tailscaled.state`
-(and `derpmap.cached.json`), written only on auth / key rotation / prefs
-change — **not** on every netmap update, because netmap disk-caching is omitted
-([why](DESIGN.md#why-netmap-disk-caching-is-removed)). Flash wear is therefore
-minimal. If you want *zero* persistent writes, point `src` at a tmpfs disk slot
-instead and accept re-authentication after a reboot.
-
-### 5. Add and start the container
+### 4. Add and start the container
 
 ```
 /container/add \
@@ -106,16 +93,24 @@ Wait for the pull/extract to finish (`status=stopped`), then start it:
 
 The daemon is now running but **not yet authenticated**.
 
-### 6. Authenticate
+### 5. Authenticate
 
-Enter the container shell and bring Tailscale up with your auth key. You can set
-subnet routes / exit-node advertisement in the same command:
+> This image runs `tailscaled` directly and does **not** bundle Tailscale's
+`containerboot` wrapper, so the `TS_AUTHKEY` environment variable is **not**
+read automatically. You authenticate with `tailscale up --authkey=...` after the
+container starts.
+
+Enter the container shell and bring Tailscale up with your auth key.
+Use `tailscale up --help` to see list of commands, customize it to your needs,
+add subnets (eg. your LAN) or exit-node advertisements in command below.
 
 ```
 /container/shell [find where name=tailscale]
 # inside the container — CHANGE ME: your key (and adjust routes/subnet):
 tailscale up --authkey=tskey-auth-CHANGEME \
-  --advertise-routes=192.168.88.0/24 \
+  --accept-routes \
+  --snat-subnet-routes=false \
+  --advertise-routes=172.20.0.0/24 \
   --advertise-exit-node
 exit
 ```
@@ -124,7 +119,7 @@ The node now appears in your Tailscale admin console. Approve the advertised
 routes / exit node there. Because the auth state is written to the persisted
 `tailscaled.state`, you only do this once — it survives reboots and updates.
 
-### 7. Enable automatic updates
+### 6. Enable automatic updates
 
 First, edit the `CONFIG` block at the top of `routeros/update-tailscale.rsc` if
 you changed any names in the steps above. The defaults match this guide
@@ -136,8 +131,6 @@ create a **named script** from it and schedule it:
 
 ```
 # Create the named script from the uploaded file's contents.
-# (Do NOT use `/import` — that just runs the file once and does not create a
-#  reusable script for the scheduler to call.)
 /system/script/add name=update-tailscale source=[/file/get update-tailscale.rsc contents]
 
 # Run it daily.
@@ -179,14 +172,14 @@ queries to Tailscale's magic DNS resolver:
 add name="ts.net" type=FWD forward-to=100.100.100.100 match-subdomain=yes
 ```
 
-This avoids writing to `/etc/resolv.conf` inside the container (which would
-happen if `--accept-dns` is passed to `tailscale up`). The container resolves
-Tailscale node names; the rest of the router uses its own DNS.
+When this is configured, you can connect to other tailscale machines using
+`[device name].[tailnet name].ts.net`. You can see and change assigned
+Tailnet DNS name in Tailscale admin panel under DNS tab.
 
 ## Updating
 
 You don't normally do anything: when a new release is published, the
-auto-update script ([step 7](#7-enable-automatic-updates)) detects the changed
+auto-update script ([step 6](#6-enable-automatic-updates)) detects the changed
 `:stable` image on its next scheduled run and recreates the container. Your
 node identity and settings persist across the update via the state mount.
 
