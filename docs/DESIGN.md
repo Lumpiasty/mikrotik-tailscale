@@ -70,8 +70,21 @@ in a future release stays omitted until deliberately added to the Dockerfile.
   saves a real ~195 kB of flash (424 kB → 229 kB), not just transfer size.
 
 The final image is built `FROM scratch` — there is no base distro layer.
-It contains only the busybox binary + applet symlinks, the CA bundle, and
-the Tailscale binary.
+It contains only the busybox binary + applet symlinks, the CA bundle, the
+Tailscale binary, and a tiny `entrypoint.sh`.
+
+### Entrypoint: IP forwarding
+
+`ENTRYPOINT` is a small `entrypoint.sh` that enables IPv4 and IPv6 forwarding
+(`net.ipv4.ip_forward`, `net.ipv6.conf.all.forwarding`) in the container's
+network namespace, then `exec`s `tailscaled` (so the daemon stays PID 1). This
+is necessary because `tailscaled` does **not** reliably enable IPv6 forwarding
+itself inside a container netns — it logs "IPv6 forwarding is disabled" and
+advertised IPv6 subnet routes silently fail. The sysctls are writable from
+inside a RouterOS container, so the entrypoint sets them directly; no
+host-side or `/container` configuration is required. The script is created in
+the builder stage so it ships in the same single `/usr/local/bin` `COPY` layer
+(preserving the [single-copy property](#avoiding-overlayfs-layer-duplication)).
 
 ### Avoiding overlayfs layer duplication
 

@@ -95,7 +95,8 @@ The daemon is now running but **not yet authenticated**.
 
 ### 5. Authenticate
 
-> This image runs `tailscaled` directly and does **not** bundle Tailscale's
+> This image runs `tailscaled` via a tiny entrypoint (which enables IP
+forwarding, then `exec`s the daemon) and does **not** bundle Tailscale's
 `containerboot` wrapper, so the `TS_AUTHKEY` environment variable is **not**
 read automatically. You authenticate with `tailscale up --authkey=...` after the
 container starts.

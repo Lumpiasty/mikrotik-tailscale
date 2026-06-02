@@ -157,6 +157,24 @@ RUN mkdir -p /out/usrlocalbin && \
     ln -s /usr/local/bin/tailscale.combined /out/usrlocalbin/tailscale && \
     ln -s /usr/local/bin/tailscale.combined /out/usrlocalbin/tailscaled
 
+# Entrypoint wrapper: enable IP forwarding inside the container's network
+# namespace, then exec tailscaled. tailscaled does NOT reliably enable IPv6
+# forwarding itself in a container netns ("IPv6 forwarding is disabled" warning),
+# which silently breaks advertised IPv6 subnet routes. The sysctls ARE writable
+# from inside a RouterOS container, so we set both here. Written in the builder
+# stage so it ships in the same single /usr/local/bin COPY layer (preserves the
+# overlayfs single-copy property). `exec` keeps tailscaled as PID 1.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      '# Enable IPv4/IPv6 forwarding. Required for advertised subnet routes and' \
+      '# exit-node functionality.' \
+      'for f in /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv6/conf/all/forwarding; do' \
+      '  if [ -w "$f" ]; then echo 1 > "$f" 2>/dev/null || echo "warn: could not write $f"; fi' \
+      'done' \
+      'exec /usr/local/bin/tailscaled "$@"' \
+      > /out/usrlocalbin/entrypoint.sh && \
+    chmod +x /out/usrlocalbin/entrypoint.sh
+
 # =============================================================================
 # Stage 2: Custom minimal busybox
 # =============================================================================
@@ -274,7 +292,9 @@ ENV PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # -----------------------------------------------------------------------------
 VOLUME ["/var/lib/tailscale"]
 
-ENTRYPOINT ["/usr/local/bin/tailscaled"]
+# entrypoint.sh enables IP forwarding (incl. IPv6) in the container netns, then
+# exec's tailscaled with the CMD flags below as its arguments.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # Default flags:
 #   --no-logs-no-support  disables logtail uploads (logtail binary code is
