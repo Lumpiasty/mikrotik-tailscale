@@ -7,6 +7,17 @@
   ],
   "labels": ["dependencies"],
   "rebaseWhen": "behind-base-branch",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update version ARGs annotated with a `# renovate:` comment (the dockerfile manager only handles FROM/image lines, not ARG values).",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+packageName=(?<packageName>\\S+))?(?:\\s+versioning=(?<versioning>\\S+))?\\s+ARG \\w+=(?<currentValue>\\S+)"
+      ],
+      "matchStringsStrategy": "any"
+    }
+  ],
   "packageRules": [
     {
       "matchManagers": ["dockerfile"],
@@ -30,8 +41,15 @@
     },
     {
       "matchManagers": ["dockerfile"],
-      "matchPackageNames": ["golang", "alpine", "busybox"],
-      "description": "Automerge PATCH-only bumps of build components (Go/Alpine/busybox) once the PR build passes; review minor/major manually.",
+      "matchPackageNames": ["golang", "alpine"],
+      "description": "Automerge PATCH-only bumps of build components (Go/Alpine) once the PR build passes; review minor/major manually.",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["busybox"],
+      "description": "busybox ARG (custom manager): automerge PATCH bumps once the PR build passes; review minor/major manually.",
       "matchUpdateTypes": ["patch"],
       "automerge": true
     },
