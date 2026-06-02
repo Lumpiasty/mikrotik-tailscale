@@ -143,6 +143,7 @@ that's a separate build, not just a `--platform` change.
 | iptables | Linux iptables support for routing rules |
 | osrouter | Configure kernel network stack and routing tables |
 | unixsocketidentity | **Required** — without it the localapi denies every CLI call with "access denied" ([tailscale#17873](https://github.com/tailscale/tailscale/issues/17873)) |
+| ipnbus | Lets `tailscale up` wait for completion and print the login URL; without it `up` returns immediately without confirming success |
 
 ## Features intentionally omitted
 

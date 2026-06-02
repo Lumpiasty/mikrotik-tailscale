@@ -69,6 +69,12 @@ WORKDIR /src/tailscale
 #                         trusted unix socket, so PermitRead/PermitWrite are
 #                         always false and EVERY CLI call (status, up, set, ...)
 #                         returns "access denied" (tailscale/tailscale#17873).
+#   ipnbus              — IPN bus watch. Without it, 'tailscale up' cannot wait
+#                         for completion: it fires config at the daemon and
+#                         returns immediately ("built with ts_omit_ipnbus; not
+#                         waiting for completion") WITHOUT printing the auth URL
+#                         or confirming success. Including it makes interactive
+#                         'up' behave normally (blocks, prints login URL).
 #
 # Everything else remains omitted, including (rationale):
 #   clientupdate  — DELIBERATELY removed. The built-in updater would download
@@ -111,6 +117,7 @@ RUN mkdir -p /out && \
           -e 's/ts_omit_health,\{0,1\}//g' \
           -e 's/ts_omit_iptables,\{0,1\}//g' \
           -e 's/ts_omit_unixsocketidentity,\{0,1\}//g' \
+          -e 's/ts_omit_ipnbus,\{0,1\}//g' \
           -e 's/,$//' \
     ) && \
     echo "Build tags: ${TAGS}" && \
