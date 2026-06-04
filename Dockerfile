@@ -199,7 +199,7 @@ RUN printf '%s\n' \
 FROM alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11 AS busybox
 
 # renovate: datasource=docker depName=busybox versioning=docker
-ARG BUSYBOX_VERSION=1.37.0
+ARG BUSYBOX_VERSION=1.38.0
 
 RUN apk add --no-cache build-base linux-headers wget bzip2 perl upx
 
