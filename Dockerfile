@@ -40,6 +40,23 @@ RUN git clone --depth 1 --branch ${TAILSCALE_VERSION} \
 
 WORKDIR /src/tailscale
 
+# Inject a stderr verbosity filter into the tailscaled package.
+#
+# With logtail compiled out (ts_omit_logtail), tailscaled never installs
+# logpolicy (see `if buildfeatures.HasLogTail` in cmd/tailscaled/tailscaled.go),
+# so log output goes raw to stderr: the [v1]/[v2] verbosity tags embedded in
+# messages are neither parsed nor filtered, and --verbose has NO effect. The
+# result is constant log spam in the RouterOS container log (filter
+# "Accept: TCP" verdicts, "netcheck: [v1] report", "wg: [v2]" handshakes and
+# keepalives) — see tailscale/tailscale#12158 and #1548.
+#
+# The injected file (build-tagged ts_omit_logtail, so it's a no-op if logtail
+# is ever re-enabled) registers a log writer in init() that drops lines
+# carrying a [v1]+ tag, restoring the equivalent of logtail's StderrLevel=0
+# default. Setting TS_LOG_VERBOSITY=1 (or higher) in the container environment
+# disables the filter at runtime for debugging — no rebuild needed.
+COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
+
 # Build a minimal combined binary (tailscale CLI + tailscaled daemon in one file).
 #
 # Tag strategy — ALLOWLIST, not blocklist:

@@ -164,7 +164,7 @@ that's a separate build, not just a `--platform` change.
 |---|---|
 | `clientupdate` | **Deliberately removed** — see [Why the built-in updater is removed](#why-the-built-in-updater-is-removed) |
 | `cachenetmap` | **Deliberately removed** — see [Why netmap disk-caching is removed](#why-netmap-disk-caching-is-removed) |
-| `logtail` | Would attempt persistent log writes; wear flash |
+| `logtail` | Would attempt persistent log writes; wear flash. Removing it also removes stderr verbosity filtering — restored by an injected filter, see [Log verbosity filtering](#log-verbosity-filtering) |
 | `netlog` | Network flow logging; separate concern |
 | `netstack` + `gro` | Userspace/gVisor networking; router uses kernel TUN |
 | `ssh` | Access via MikroTik SSH + `tailscale` CLI instead |
@@ -225,6 +225,54 @@ to internal flash to buy resilience for a rare corner case. Omitting it keeps
 the in-memory resilience (the common case) while eliminating per-netmap flash
 writes. Only `tailscaled.state` (written on auth / key rotation) ever touches
 flash.
+
+### Log verbosity filtering
+
+Upstream `tailscaled` embeds verbosity tags (`[v1]`, `[v2]`, …) inside its log
+messages and relies on the **logtail** subsystem to act on them: in a stock
+build, logtail's log policy intercepts everything written via the standard
+`log` package, parses the tag, and only writes a line to stderr when its level
+is within `--verbose` (default 0 — non-verbose messages only). The `--verbose`
+flag is literally wired into logtail (`pol.SetVerbosityLevel(args.verbose)` in
+`cmd/tailscaled/tailscaled.go`).
+
+This build omits logtail (`ts_omit_logtail`) to avoid log-upload code and
+flash writes — but that removed the stderr filtering along with it, as
+collateral damage. The result: every verbose line went **unfiltered** to
+stderr and into the RouterOS container log, with the literal `[v1]` tag still
+in the text. On an active node that means constant spam, several lines per
+minute:
+
+```
+tailscale: ... [v1] Accept: TCP{...:53256 > ...:50000} 391 tcp non-syn
+tailscale: ... netcheck: [v1] report: udp=true v6=true ... derp=22 ...
+tailscale: ... wg: [v2] [0GwzF] - Receiving keepalive packet
+```
+
+This is a [known](https://github.com/tailscale/tailscale/issues/12158)
+[long-standing](https://github.com/tailscale/tailscale/issues/1548) complaint
+even in full builds, and RouterOS logging offers no way to discard matching
+messages (no drop action, rules are all-match — a regex rule duplicates rather
+than diverts).
+
+The fix here: the build injects a ~20-line Go file
+(`patches/stderr_verbosity_filter.go`, copied into `cmd/tailscaled/` before
+`go build`) whose `init()` wraps the standard log output and silently drops
+any line carrying a `[v1]`/`[v2]`/`[v3]` tag. This restores the exact
+equivalent of logtail's default `StderrLevel=0` behavior without pulling in
+the upload machinery. Properties:
+
+- **No upstream sources modified** — it's a new file in the package, so it
+  survives Tailscale version bumps without rebasing (only relies on the
+  daemon using the stdlib `log` package, which is core behavior).
+- **Build-tagged `//go:build ts_omit_logtail`** — if logtail is ever
+  re-enabled, the file compiles out automatically and logtail's own filtering
+  takes over; the two can never conflict.
+- **Runtime escape hatch** — setting the `TS_LOG_VERBOSITY=1` environment
+  variable disables the filter (and, conveniently, the same knob is read by
+  upstream as the default `--verbose` level). Verbose logs are one
+  `/container/envs/add` away; no rebuild needed. See
+  [USAGE.md → Logging](USAGE.md#logging).
 
 ## Volume layout
 

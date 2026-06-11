@@ -177,6 +177,40 @@ When this is configured, you can connect to other tailscale machines using
 `[device name].[tailnet name].ts.net`. You can see and change assigned
 Tailnet DNS name in Tailscale admin panel under DNS tab.
 
+## Logging
+
+The container logs to the RouterOS log (topic `container`) via `logging=yes`.
+
+Upstream `tailscaled` is notoriously chatty: by default it would emit a line
+for every accepted connection (`Accept: TCP{...}`), every netcheck report, and
+every WireGuard handshake/keepalive — several lines per minute on an active
+node ([tailscale#12158](https://github.com/tailscale/tailscale/issues/12158)).
+This image filters those verbose (`[v1]`/`[v2]`-tagged) messages out at the
+source, so only meaningful messages (startup, auth, route changes, warnings,
+errors) reach the RouterOS log. See
+[DESIGN.md → Log verbosity filtering](DESIGN.md#log-verbosity-filtering) for
+how and why.
+
+To temporarily get the verbose logs back for debugging (e.g. NAT-traversal
+issues), set the `TS_LOG_VERBOSITY` environment variable and recreate the
+container with the envlist attached:
+
+```
+/container/envs/add list=tailscale_envs name=TS_LOG_VERBOSITY value=1
+/container/set [find where name=tailscale] envlist=tailscale_envs
+/container/stop [find where name=tailscale]
+/container/start [find where name=tailscale]
+```
+
+Any value ≥ 1 disables the filter (and raises the daemon's own verbosity by
+the same amount). Remove the variable and restart to silence it again:
+
+```
+/container/envs/remove [find where name=TS_LOG_VERBOSITY]
+/container/stop [find where name=tailscale]
+/container/start [find where name=tailscale]
+```
+
 ## Updating
 
 You don't normally do anything: when a new release is published, the
