@@ -70,6 +70,7 @@ ARMv5 (hEX Refresh / hAP ax S) is **not** supported — see
 |---|---|
 | `Dockerfile` | Multi-stage, multi-arch build (cross-compiled Go + custom busybox) |
 | `busybox-applets.config` | Curated busybox applet set |
+| `patches/` | Source files injected into the Tailscale tree at build time (stderr verbosity filter) |
 | `build.sh` | Build all/one arch, optionally export per-arch tarballs |
 | `routeros/update-tailscale.rsc` | RouterOS auto-update script (digest compare + recreate) |
 | `.woodpecker/` | CI: Renovate cron, release tagging, multi-arch publish |
