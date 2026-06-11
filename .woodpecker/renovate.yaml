@@ -46,7 +46,7 @@ steps:
       - bao kv get -mount secret -field GITHUB_COM_TOKEN renovate > /woodpecker/github_com_token
   - name: renovate
     # Renovate's built-in "woodpecker" manager tracks this image automatically.
-    image: renovate/renovate:43.207.4
+    image: renovate/renovate:43.220.0
     environment:
       # --- platform / target ---
       RENOVATE_PLATFORM: gitea
