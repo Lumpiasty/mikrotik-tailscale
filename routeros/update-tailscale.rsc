@@ -3,8 +3,9 @@
 # =============================================================================
 # Checks the Gitea registry for a new :stable image and, only if the published
 # image actually changed, recreates the container. Designed for RouterOS 7.x
-# (tested target: 7.21.2, arm64). Requires RouterOS >= 7.13 for the :deserialize
-# command used to parse the registry token JSON.
+# (tested target: 7.23, arm64). Requires RouterOS >= 7.23 for the container
+# restart-policy properties (and >= 7.13 for the :deserialize command used to
+# parse the registry token JSON).
 #
 # HOW IT DECIDES "something changed":
 #   It fetches the manifest digest of the :stable tag from the registry and
@@ -59,6 +60,12 @@
 :local cInterface "veth-tailscale"
 :local cLogging   yes
 :local cStartOnBoot yes
+# Restart the container automatically if tailscaled crashes (tailscaled is
+# PID 1; if it dies the container stops). on-failure restarts only on abnormal
+# exit (a manual /container/stop stays stopped); 10s is a gentle backoff.
+# Requires RouterOS >= 7.23.
+:local cRestartPolicy "on-failure"
+:local cRestartInterval "10s"
 # ----------------------------------------------------------------------------
 
 :log info "$scriptName: checking for image updates"
@@ -174,6 +181,8 @@
     mountlists=$cMountList \
     logging=$cLogging \
     start-on-boot=$cStartOnBoot \
+    restart-policy=$cRestartPolicy \
+    restart-interval=$cRestartInterval \
     name=$cName
 } do={
   :log error "$scriptName: container add failed: $e"

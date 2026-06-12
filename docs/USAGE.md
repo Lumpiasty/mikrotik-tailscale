@@ -9,7 +9,7 @@ reasoning behind these choices, see [DESIGN.md](DESIGN.md).
 
 ## Deploy on MikroTik (RouterOS)
 
-Verified on RouterOS 7.21.2 (arm64, CRS418). Commands are grouped into
+Verified on RouterOS 7.23 (arm64, CRS418). Commands are grouped into
 copy-paste blocks, defaults should fit most configurations.
 
 > Because the image has no built-in updater (the `clientupdate` feature is
@@ -19,7 +19,9 @@ copy-paste blocks, defaults should fit most configurations.
 
 ### 0. Prerequisites
 
-- RouterOS >7.13 with the **container** package installed.
+- RouterOS >= 7.23 with the **container** package installed
+  (7.23 is needed for container `restart-policy`; the deploy itself works on
+  >= 7.13 if you drop the restart options).
 - Container mode enabled ([documentation](https://manual.mikrotik.com/docs/System%20Information%20and%20Utilities/device-mode/#changing-mode-of-device-mode)):
 
   ```
@@ -80,6 +82,8 @@ just that directory:
     mountlists=tailscale_state \
     logging=yes \
     start-on-boot=yes \
+    restart-policy=on-failure \
+    restart-interval=10s \
     name=tailscale
 ```
 
