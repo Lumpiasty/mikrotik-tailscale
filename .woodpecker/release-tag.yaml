@@ -13,9 +13,10 @@
 # unchanged, so no tag is created and nothing is released — they ride along
 # with the next Tailscale bump or manual tag.
 
-# Skipped for doc-only pushes: TAILSCALE_VERSION lives in the Dockerfile, so a
-# push that doesn't touch non-doc files can never introduce a new version to
-# tag (the job would just no-op after spinning up OpenBao + git containers).
+# Skipped for pushes that can't introduce a new Tailscale version:
+# TAILSCALE_VERSION lives in the Dockerfile, so a push touching only docs or
+# the RouterOS-side script can never produce a new version to tag (the job
+# would just no-op after spinning up OpenBao + git containers).
 when:
   - event: push
     branch: main
@@ -23,6 +24,8 @@ when:
       exclude:
         - '**/*.md'
         - 'docs/**'
+        - 'routeros/**'
+        - 'renovate.json'
 
 steps:
   - name: Get git token from OpenBao
