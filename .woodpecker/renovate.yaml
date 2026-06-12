@@ -58,8 +58,12 @@ steps:
       # Use the committed renovate.json; don't open an onboarding PR.
       RENOVATE_ONBOARDING: "false"
       RENOVATE_REQUIRE_CONFIG: "optional"
-      # Git identity for the branches/commits Renovate creates.
-      RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate@localhost>"
+      # Git identity for the branches/commits Renovate creates. MUST match the
+      # bot's Gitea account email: platform actions (automerge merge commits,
+      # "update branch") are attributed to the account email, and Renovate
+      # flags branches containing commits from unrecognized emails as
+      # "edited by someone else" and stops rebasing them.
+      RENOVATE_GIT_AUTHOR: "Renovate Bot <renovate@lumpiasty.xyz>"
       # GitHub token (read-only, no repo access) lets Renovate fetch release
       # notes / changelogs and avoids GitHub API rate limits for the
       # github-releases datasource (tailscale). Optional but recommended.
