@@ -9,21 +9,24 @@
 # Reports pass/fail status back to Gitea, so it shows up as a required check on
 # the PR.
 
-# Doc-only changes can't affect the image, so they don't trigger the build.
+# Changes that can't affect the image don't trigger the build: docs and the
+# RouterOS-side script (routeros/**: lives on the router, not in the image).
 # NOTE: if Gitea is ever configured to REQUIRE this check for merging, a
-# doc-only PR will have no check at all — exempt such PRs or merge manually.
-# Renovate PRs always touch the Dockerfile or pipeline files, so the
-# automerge gate is unaffected by these exclusions.
+# PR touching only excluded files will have no check at all — exempt such PRs
+# or merge manually. Renovate PRs always touch the Dockerfile or pipeline
+# files, so the automerge gate is unaffected by these exclusions.
 when:
   - event: pull_request
     path:
-      exclude: &doc_paths
+      exclude: &non_image_paths
         - '**/*.md'
         - 'docs/**'
+        - 'routeros/**'
+        - 'renovate.json'
   - event: push
     branch: main
     path:
-      exclude: *doc_paths
+      exclude: *non_image_paths
 
 steps:
   - name: Build all arches (no push)
