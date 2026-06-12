@@ -294,6 +294,22 @@ Only the small, rarely-written state file touches flash; the socket dir is
 tmpfs. The netmap is held in memory only — see
 [Why netmap disk-caching is removed](#why-netmap-disk-caching-is-removed).
 
+### What lives in the state dir
+
+| File | Purpose | Write frequency |
+|---|---|---|
+| `tailscaled.state` | Node identity, auth keys, prefs | On auth / key rotation / prefs change |
+| `derpmap.cached.json` | Cached DERP relay server list for **bootstrap DNS**: at cold start with broken/unavailable DNS, tailscaled asks DERP servers to resolve the control plane. The binary ships a static DERP list, but it goes stale; this cache keeps the current one. | Once at first auth, then **only when Tailscale's relay infrastructure changes** (a few times a year). `dnsfallback.UpdateCache` has a deep-equal guard and skips the write when the DERP map is unchanged — netmap churn never touches it. |
+
+`derpmap.cached.json` is intentionally **kept** despite the flash-wear policy:
+the policy targets *frequent* writes (netmap deltas, logs), not one-shot
+caches. On a router this cache is genuinely useful — after a power outage the
+device may boot with WAN up but upstream DNS broken, exactly the case where a
+fresh DERP list lets the node reach the control plane anyway. With
+`cachenetmap` omitted, this file and `tailscaled.state` are the only cold-start
+resilience the node has. (There is no `ts_omit_*` tag for it; it is written
+only because `--statedir` is set.)
+
 ## Flash wear protection
 
 Several measures are in place to avoid wearing out internal flash:
