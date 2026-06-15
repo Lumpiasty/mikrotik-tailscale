@@ -8,6 +8,10 @@
 #
 # Reports pass/fail status back to Gitea, so it shows up as a required check on
 # the PR.
+#
+# Registry credentials are fetched from OpenBao (same AppRole as release.yaml)
+# solely to read and write the build cache image. The build itself is still
+# dry-run (nothing is published as a release image).
 
 # Changes that can't affect the image don't trigger the build: docs and the
 # RouterOS-side script (routeros/**: lives on the router, not in the image).
@@ -29,12 +33,40 @@ when:
       exclude: *non_image_paths
 
 steps:
+  - name: Get registry creds from OpenBao
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+      ROLE_ID:
+        from_secret: renovate_role_id
+      SECRET_ID:
+        from_secret: renovate_secret_id
+    commands:
+      - bao write -field token auth/approle/login
+          role_id=$ROLE_ID
+          secret_id=$SECRET_ID > /woodpecker/.vault_id
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - 'printf "PLUGIN_USERNAME=%s\n" "$(bao kv get -mount secret -field REGISTRY_USERNAME container-registry)" > /woodpecker/registry.env'
+      - 'printf "PLUGIN_PASSWORD=%s\n" "$(bao kv get -mount secret -field REGISTRY_PASSWORD container-registry)" >> /woodpecker/registry.env'
+
   - name: Build all arches (no push)
     image: woodpeckerci/plugin-docker-buildx:6.1.0
     privileged: true
     settings:
+      registry: gitea.lumpiasty.xyz
       repo: mikrotik-tailscale
       platforms: linux/amd64,linux/arm64,linux/arm/v7
-      dry-run: true
+      dry_run: true
       build_args:
         - OCI_VERSION=ci-${CI_COMMIT_SHA}
+      cache_images:
+        - gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale:buildcache
+      env_file: /woodpecker/registry.env
+
+  - name: Invalidate OpenBao token
+    image: quay.io/openbao/openbao:2.5.4
+    environment:
+      VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
+    commands:
+      - export VAULT_TOKEN=$(cat /woodpecker/.vault_id)
+      - bao write -f auth/token/revoke-self

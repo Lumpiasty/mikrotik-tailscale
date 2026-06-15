@@ -54,6 +54,8 @@ steps:
         - stable
       build_args:
         - OCI_VERSION=${CI_COMMIT_TAG}
+      cache_images:
+        - gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale:buildcache
       # Credentials (PLUGIN_USERNAME / PLUGIN_PASSWORD) come from OpenBao.
       env_file: /woodpecker/registry.env
   - name: Invalidate OpenBao token
