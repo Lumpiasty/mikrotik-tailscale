@@ -57,6 +57,49 @@ WORKDIR /src/tailscale
 # disables the filter at runtime for debugging — no rebuild needed.
 COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
 
+# Patch net/tstun/wrap.go: fix panic("unreachable") in invertGSOChecksum for
+# ts_omit_netstack builds.
+#
+# invertGSOChecksum is a gVisor/GSO helper that inverts a transport-layer
+# checksum before/after SNAT when gVisor hands us a segment with a partial
+# checksum (NeedsCsum=true). It is only meaningful when netstack (gVisor) is
+# compiled in (HasNetstack=true).
+#
+# The function correctly guards its body with:
+#   if !buildfeatures.HasNetstack { panic("unreachable") }
+#
+# When built with ts_omit_netstack, HasNetstack is a const false, so that guard
+# evaluates to `if true { panic(...) }` — the function always panics.
+#
+# The problem: invertGSOChecksum is called unconditionally from injectedRead()
+# (twice, around pc.snat()), even for the res.data path where res.packet==nil
+# and gso is a zero-value netstack_GSO (NeedsCsum=false). The HasNetstack
+# guard in the res.packet branch does NOT protect these calls.
+#
+# As a result, any code path that injects an outbound packet via InjectOutbound()
+# — which happens when enabling exit-node use (Tailscale sends TSMP messages
+# and synthesizes packets through the TUN injection path) — hits injectedRead
+# with res.data!=nil, calls invertGSOChecksum, and crashes with:
+#   panic: unreachable
+#   tailscale.com/net/tstun.invertGSOChecksum(...)
+#   tailscale.com/net/tstun.(*Wrapper).injectedRead(...)  wrap.go:1077
+#
+# Fix: replace the `panic("unreachable")` with a `return` in invertGSOChecksum.
+# When HasNetstack=false (ts_omit_netstack), a zero-value netstack_GSO always
+# has NeedsCsum=false, so the function is correctly a no-op anyway. This matches
+# what the function would do if the rest of its body ran: NeedsCsum=false → return.
+#
+# The sed expression targets the function precisely: it matches the three-line
+# sequence that opens invertGSOChecksum's HasNetstack guard, and replaces only
+# the panic line with return. The pattern is stable across minor reformats
+# because it anchors on the literal function comment and the specific panic string.
+#
+# See tailscale/tailscale issue for context (no upstream fix as of v1.98.5):
+# panic happens when using exit-node via a ts_omit_netstack build.
+RUN sed -i \
+    -e '/func invertGSOChecksum/,/^}/ s/\t\tpanic("unreachable")/\t\treturn/' \
+    net/tstun/wrap.go
+
 # Build a minimal combined binary (tailscale CLI + tailscaled daemon in one file).
 #
 # Tag strategy — ALLOWLIST, not blocklist:
