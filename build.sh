@@ -12,7 +12,8 @@
 #
 # Requirements:
 #   - docker with buildx
-#   - For non-native targets: binfmt/QEMU emulators registered, e.g.:
+#   - For non-native targets: binfmt/QEMU emulators registered for the applet
+#     symlink probe step (a minor step; the full C/Go compile is native):
 #       docker run --privileged --rm tonistiigi/binfmt --install arm64,arm
 set -eu
 
