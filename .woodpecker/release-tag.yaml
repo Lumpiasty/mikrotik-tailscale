@@ -44,7 +44,7 @@ steps:
       - bao kv get -mount secret -field RENOVATE_TOKEN renovate > /woodpecker/git_token
 
   - name: Auto-tag mt.1 on Tailscale bump
-    image: alpine/git:v2.52.0
+    image: alpine/git:v2.54.0
     environment:
       CI_REPO_URL: https://gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale.git
     commands:
