@@ -15,22 +15,26 @@ Measured flattened rootfs for the arm64 image:
 
 | Component | On-disk size |
 |---|---|
-| `tailscale.combined` (UPX-compressed) | ~2.98 MB |
+| `tailscale.combined` (UPX-compressed) | ~3.47 MB |
 | custom static busybox (UPX, ~100 applets) | ~218 kB |
 | CA certificates | ~213 kB |
-| **Total extracted rootfs** | **~3.4 MB** |
+| **Total extracted rootfs** | **~3.9 MB** |
 
-(The compressed image / transfer tarball is ~3.3–4.3 MB depending on arch.)
+The `tailscale.combined` figure includes `netstack` (gVisor), which adds
+~0.5 MB on disk over a netstack-omitted build — a deliberate inclusion, see
+[Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun).
+
+(The compressed image / transfer tarball is ~3.8–4.3 MB depending on arch.)
 
 | Arch | Image (compressed) |
 |---|---|
-| amd64  | ~4.2 MB |
-| arm64  | ~3.5 MB |
-| arm/v7 | ~3.5 MB |
+| amd64  | ~4.3 MB |
+| arm64  | ~4.0 MB |
+| arm/v7 | ~4.0 MB |
 
-On a deployed RouterOS device the container consumes **~3.7 MiB of flash**
+On a deployed RouterOS device the container consumes **~4.2 MiB of flash**
 (measured by `free-hdd-space` delta). Note that `du` *inside* the container
-reports roughly double that (~7 MB) — that is RouterOS block-allocation
+reports roughly double that (~8 MB) — that is RouterOS block-allocation
 rounding, **not** real usage or duplication; see
 [Avoiding overlayfs layer duplication](#avoiding-overlayfs-layer-duplication)
 for how to measure correctly.
@@ -118,13 +122,13 @@ delta**, not `du`:
 /system/resource/print     # note free-hdd-space before and after adding the container
 ```
 
-The container should consume **~3.7 MiB** of flash (e.g. 94.6 → 90.9 MiB free).
+The container should consume **~4.2 MiB** of flash (e.g. 94.6 → 90.4 MiB free).
 
 Do **not** trust `du` inside the container for this. Busybox `du` reports
-*allocated blocks*, and RouterOS's container store rounds a ~3 MB file up to
-~6 MB of blocks — so `du -sx /` reports ~7 MB even though real flash use is
-~3.7 MB. `ls -la /usr/local/bin` confirms the binary's true content size
-(~3.1 MB) and that it is a single file with two symlinks (no duplication).
+*allocated blocks*, and RouterOS's container store rounds the ~3.5 MB binary up
+to ~7 MB of blocks — so `du -sx /` reports ~8 MB even though real flash use is
+~4.2 MB. `ls -la /usr/local/bin` confirms the binary's true content size
+(~3.5 MB) and that it is a single file with two symlinks (no duplication).
 The image itself carries the binary in exactly one layer (verified at the blob
 level); the inflation is purely the filesystem's block accounting.
 
@@ -149,7 +153,8 @@ that's a separate build, not just a `--platform` change.
 | `advertise-routes` | Expose LAN subnets to the tailnet |
 | `use-exit-node` | Route the router's own traffic via a remote exit node |
 | `accept-routes` | Receive subnet routes from other tailnet nodes |
-| DNS / MagicDNS | Resolve `*.ts.net` names |
+| DNS / MagicDNS | Resolve `*.ts.net` names (resolver + resolv.conf manager). **Note:** serving `100.100.100.100` also requires `netstack` — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
+| `netstack` + `gro` | gVisor userspace stack. Counter-intuitively **required** to serve MagicDNS on `100.100.100.100`, even though the router uses a real kernel TUN — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
 | portmapper (NAT-PMP/PCP/UPnP) | Punch through upstream NAT |
 | listenrawdisco | Raw socket disco for better NAT traversal |
 | health | Powers `tailscale status` output |
@@ -166,7 +171,6 @@ that's a separate build, not just a `--platform` change.
 | `cachenetmap` | **Deliberately removed** — see [Why netmap disk-caching is removed](#why-netmap-disk-caching-is-removed) |
 | `logtail` | Would attempt persistent log writes; wear flash. Removing it also removes stderr verbosity filtering — restored by an injected filter, see [Log verbosity filtering](#log-verbosity-filtering) |
 | `netlog` | Network flow logging; separate concern |
-| `netstack` + `gro` | Userspace/gVisor networking; router uses kernel TUN |
 | `ssh` | Access via MikroTik SSH + `tailscale` CLI instead |
 | `linuxdnsfight` | inotify on `/etc/resolv.conf`; no systemd in container |
 | `networkmanager` / `resolved` / `dbus` / `sdnotify` | No systemd stack in container |
@@ -225,6 +229,84 @@ to internal flash to buy resilience for a rare corner case. Omitting it keeps
 the in-memory resilience (the common case) while eliminating per-netmap flash
 writes. Only `tailscaled.state` (written on auth / key rotation) ever touches
 flash.
+
+### Why netstack is required (even with a kernel TUN)
+
+This is the least obvious inclusion in the build, so it is documented in full.
+
+`netstack` is Tailscale's embedded **gVisor userspace TCP/IP stack**. The
+natural assumption — and what earlier versions of this build acted on — is that
+a router which owns a **real kernel TUN device** (it is *not* run with
+`--tun=userspace-networking`) has no use for a userspace stack, so `netstack`
+(and its dependent `gro`) can be omitted to save space. That assumption is
+**wrong for one specific, important path: MagicDNS.**
+
+**MagicDNS on `100.100.100.100` is served only by netstack.** In Tailscale
+v1.98.5 the in-process listener for the Tailscale service IP
+(`100.100.100.100:53`, UDP) is installed exclusively by netstack's
+`handleLocalPackets`, wired into the TUN wrapper as
+`PreFilterPacketOutboundToWireGuardNetstackIntercept`
+(`wgengine/netstack/netstack.go`). When a packet leaves the host toward
+`100.100.100.100`, this hook absorbs it into the gVisor stack, whose UDP-53
+acceptor runs the MagicDNS resolver.
+
+**The "engine fallback" does not actually exist.** The TUN wrapper consults a
+second hook, `PreFilterPacketOutboundToWireGuardEngineIntercept`, and a comment
+in `net/tstun/wrap.go` claims it "primarily handles quad-100 if netstack is not
+installed." In v1.98.5 that comment is **false on Linux**: the engine
+`handleLocalPackets` (`wgengine/userspace.go`) only reflects loopback on
+darwin/ios/plan9 and otherwise returns `Accept` — it never touches
+`100.100.100.100`. So with `ts_omit_netstack` there is **no** code that absorbs
+quad-100 packets at all.
+
+**`dns` and `netstack` are independent tags.** The `dns` feature (which this
+build opts in) links the resolver and the `/etc/resolv.conf` manager, but it has
+no dependency on `netstack` and does **not** install any quad-100 transport.
+The net result of `dns` on + `netstack` off is a resolver that is correctly
+wired up but that **never receives any packets** — the worst kind of silent
+breakage. Symptoms observed on the device:
+
+- `/etc/resolv.conf` correctly points at `100.100.100.100` (the manager works),
+- but `dig anything @100.100.100.100` from inside the container **times out**
+  ("no servers could be reached"),
+- and even tailnet-internal names fail: `ping host.<tailnet>.ts.net` →
+  `bad address` (a name that needs **no** upstream forwarding still can't
+  resolve, proving the listener itself is dead, not an upstream-resolver issue),
+- while `ping 1.1.1.1` (a raw IP needing no DNS) works fine over the kernel data
+  path — confirming forwarding/exit-node connectivity is unaffected and isolating
+  the fault to DNS serving.
+
+**It also fixed a crash.** Omitting `netstack` set `buildfeatures.HasNetstack`
+to a compile-time `false`, which turned the guard in
+`net/tstun.invertGSOChecksum` (`if !HasNetstack { panic("unreachable") }`) into
+an always-panic. That function is called on the packet-injection path used when
+enabling exit-node mode, producing `panic: unreachable` and a daemon restart
+loop. Enabling `netstack` makes `HasNetstack` a const `true`, so the guard
+becomes dead code and the crash disappears as a side effect — fixed at the root
+cause rather than patched around.
+
+**Cost.** Measured on arm64, a netstack-enabled build versus a netstack-omitted
+one:
+
+| Metric | netstack omitted | netstack enabled | Delta |
+|---|---|---|---|
+| Extracted rootfs (flash) | ~3.42 MB | ~3.91 MB | **+0.49 MB** |
+| `tailscale.combined` on disk (UPX) | ~2.99 MB | ~3.47 MB | +0.48 MB |
+| Resident RAM after UPX decompress | ~12.25 MB | ~14.56 MB | **+2.31 MB** |
+
+The flash cost (~0.5 MB) is negligible on a 16 MB-class device. The RAM cost
+(~2.3 MB resident) is the real consideration on low-memory models, but is
+acceptable given that without it MagicDNS is entirely non-functional. The
+trade is: **half a megabyte of flash to make MagicDNS work at all.** `gro`
+(Generic Receive Offload) depends on `netstack` and is pulled in alongside it;
+it is small and improves throughput on the netstack path.
+
+**Caveat for future Tailscale bumps.** This coupling (quad-100 serving living
+only in netstack) is an upstream implementation detail, not a stable contract.
+If a future release adds a genuine non-netstack quad-100 path — or the daemon
+itself is refactored — re-test whether `netstack` can be dropped again. The
+canary is simple: from inside the container, `dig google.com @100.100.100.100`
+must return answers and `ping <host>.<tailnet>.ts.net` must resolve.
 
 ### Log verbosity filtering
 
