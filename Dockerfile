@@ -70,49 +70,6 @@ WORKDIR /src/tailscale
 # disables the filter at runtime for debugging — no rebuild needed.
 COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
 
-# Patch net/tstun/wrap.go: fix panic("unreachable") in invertGSOChecksum for
-# ts_omit_netstack builds.
-#
-# invertGSOChecksum is a gVisor/GSO helper that inverts a transport-layer
-# checksum before/after SNAT when gVisor hands us a segment with a partial
-# checksum (NeedsCsum=true). It is only meaningful when netstack (gVisor) is
-# compiled in (HasNetstack=true).
-#
-# The function correctly guards its body with:
-#   if !buildfeatures.HasNetstack { panic("unreachable") }
-#
-# When built with ts_omit_netstack, HasNetstack is a const false, so that guard
-# evaluates to `if true { panic(...) }` — the function always panics.
-#
-# The problem: invertGSOChecksum is called unconditionally from injectedRead()
-# (twice, around pc.snat()), even for the res.data path where res.packet==nil
-# and gso is a zero-value netstack_GSO (NeedsCsum=false). The HasNetstack
-# guard in the res.packet branch does NOT protect these calls.
-#
-# As a result, any code path that injects an outbound packet via InjectOutbound()
-# — which happens when enabling exit-node use (Tailscale sends TSMP messages
-# and synthesizes packets through the TUN injection path) — hits injectedRead
-# with res.data!=nil, calls invertGSOChecksum, and crashes with:
-#   panic: unreachable
-#   tailscale.com/net/tstun.invertGSOChecksum(...)
-#   tailscale.com/net/tstun.(*Wrapper).injectedRead(...)  wrap.go:1077
-#
-# Fix: replace the `panic("unreachable")` with a `return` in invertGSOChecksum.
-# When HasNetstack=false (ts_omit_netstack), a zero-value netstack_GSO always
-# has NeedsCsum=false, so the function is correctly a no-op anyway. This matches
-# what the function would do if the rest of its body ran: NeedsCsum=false → return.
-#
-# The sed expression targets the function precisely: it matches the three-line
-# sequence that opens invertGSOChecksum's HasNetstack guard, and replaces only
-# the panic line with return. The pattern is stable across minor reformats
-# because it anchors on the literal function comment and the specific panic string.
-#
-# See tailscale/tailscale issue for context (no upstream fix as of v1.98.5):
-# panic happens when using exit-node via a ts_omit_netstack build.
-RUN sed -i \
-    -e '/func invertGSOChecksum/,/^}/ s/\t\tpanic("unreachable")/\t\treturn/' \
-    net/tstun/wrap.go
-
 # Build a minimal combined binary (tailscale CLI + tailscaled daemon in one file).
 #
 # Tag strategy — ALLOWLIST, not blocklist:
@@ -148,6 +105,34 @@ RUN sed -i \
 #                         waiting for completion") WITHOUT printing the auth URL
 #                         or confirming success. Including it makes interactive
 #                         'up' behave normally (blocks, prints login URL).
+#   netstack            — gVisor userspace network stack. Counter-intuitively
+#                         REQUIRED even though the router uses a real kernel TUN
+#                         (NOT --tun=userspace-networking). In v1.98.5 the
+#                         100.100.100.100:53 MagicDNS listener is served ONLY by
+#                         netstack's handleLocalPackets, installed via
+#                         PreFilterPacketOutboundToWireGuardNetstackIntercept.
+#                         The non-netstack "engine" interceptor that the wrap.go
+#                         comments claim handles quad-100 "if netstack is not
+#                         installed" does NOT actually do so on Linux (its body
+#                         only reflects loopback on darwin/ios/plan9, else
+#                         Accept). So with ts_omit_netstack, NOTHING absorbs
+#                         packets to 100.100.100.100: queries fall through to
+#                         WireGuard, no peer owns that IP, and even tailnet-name
+#                         resolution (and 'ping host.tailnet.ts.net') times out.
+#                         The 'dns' tag links the resolver but nothing routes
+#                         packets to it without netstack — the two tags are
+#                         independent (dns has no Dep on netstack). Omitting
+#                         netstack ALSO triggered a panic("unreachable") in
+#                         net/tstun.invertGSOChecksum on the exit-node inject
+#                         path (HasNetstack=const false made the guard always
+#                         panic); enabling netstack makes that guard dead code,
+#                         fixing the crash as a side effect. Cost (arm64, vs a
+#                         netstack-omitted build): ~+0.5 MB extracted on flash
+#                         and ~+2.3 MB resident RAM after UPX decompression —
+#                         measured, acceptable for a 16 MB-flash router.
+#   gro                 — Generic Receive Offload (perf). Depends on netstack;
+#                         pulled in with it. Small, and improves throughput on
+#                         the netstack DNS/inject path.
 #
 # Everything else remains omitted, including (rationale):
 #   clientupdate  — DELIBERATELY removed. The built-in updater would download
@@ -172,9 +157,11 @@ RUN sed -i \
 #                   which is exactly the flash wear we want to avoid.
 #   logtail       — no persistent log writes to flash; also pass
 #                   --no-logs-no-support at runtime
-#   netstack+gro  — userspace networking; router uses kernel TUN
 #   ssh           — not needed; access via MikroTik SSH + tailscale CLI
 #   all GUI/desktop/cloud/k8s features — irrelevant for a headless router
+#
+# NOTE: netstack/gro are NOT in this omit list — see the opted-in section above
+# for why MagicDNS quad-100 serving structurally requires them in v1.98.5.
 
 RUN mkdir -p /out && \
     ALL_OMIT=$(GOOS= GOARCH= go run ./cmd/featuretags --min --add=osrouter) && \
@@ -191,6 +178,8 @@ RUN mkdir -p /out && \
           -e 's/ts_omit_iptables,\{0,1\}//g' \
           -e 's/ts_omit_unixsocketidentity,\{0,1\}//g' \
           -e 's/ts_omit_ipnbus,\{0,1\}//g' \
+          -e 's/ts_omit_netstack,\{0,1\}//g' \
+          -e 's/ts_omit_gro,\{0,1\}//g' \
           -e 's/,$//' \
     ) && \
     echo "Build tags: ${TAGS}" && \
