@@ -133,6 +133,31 @@ COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
 #   gro                 — Generic Receive Offload (perf). Depends on netstack;
 #                         pulled in with it. Small, and improves throughput on
 #                         the netstack DNS/inject path.
+#   peerapiserver       — REQUIRED to be a functional exit node. In v1.98.5
+#                         'advertiseexitnode' DECLARES a dependency on
+#                         peerapiserver (featuretags.go Deps, "to run the ExitDNS
+#                         server"), but this build's allowlist works by stripping
+#                         individual ts_omit_ tags and does NOT re-resolve Deps —
+#                         so featuretags --min still emitted ts_omit_peerapiserver
+#                         and our advertiseexitnode opt-in alone left it omitted.
+#                         peerapiserver gates the entire PeerAPI HTTP server,
+#                         including the /dns-query DoH endpoint (peerapi.go,
+#                         guarded by buildfeatures.HasPeerAPIServer). Without it
+#                         initPeerAPIListenerLocked() returns early: the node
+#                         never advertises the PeerAPIDNS service, so exit-node
+#                         CLIENTS' exitNodeCanProxyDNS(thisNode) returns false.
+#                         With no tailnet global nameserver configured, the
+#                         client's resolver then has an empty Routes["."] and
+#                         returns an INSTANT authoritative SERVFAIL locally
+#                         (forwarder.go servfailResponse, aa=1, 0 ms, no I/O) —
+#                         i.e. devices using this router as their exit node could
+#                         not resolve PUBLIC names. Including peerapiserver makes
+#                         the node serve the exit-node DoH DNS proxy, so clients
+#                         get public DNS automatically (the normal exit-node
+#                         behavior) with no tailnet DNS config required.
+#                         peerapiserver has NO Deps and pulls in no large
+#                         subsystems — a small addition. (outboundproxy is NOT
+#                         needed for this and stays omitted.)
 #
 # Everything else remains omitted, including (rationale):
 #   clientupdate  — DELIBERATELY removed. The built-in updater would download
@@ -180,6 +205,7 @@ RUN mkdir -p /out && \
           -e 's/ts_omit_ipnbus,\{0,1\}//g' \
           -e 's/ts_omit_netstack,\{0,1\}//g' \
           -e 's/ts_omit_gro,\{0,1\}//g' \
+          -e 's/ts_omit_peerapiserver,\{0,1\}//g' \
           -e 's/,$//' \
     ) && \
     echo "Build tags: ${TAGS}" && \

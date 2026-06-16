@@ -155,6 +155,7 @@ that's a separate build, not just a `--platform` change.
 | `accept-routes` | Receive subnet routes from other tailnet nodes |
 | DNS / MagicDNS | Resolve `*.ts.net` names (resolver + resolv.conf manager). **Note:** serving `100.100.100.100` also requires `netstack` — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
 | `netstack` + `gro` | gVisor userspace stack. Counter-intuitively **required** to serve MagicDNS on `100.100.100.100`, even though the router uses a real kernel TUN — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
+| `peerapiserver` | Serves the PeerAPI, including the `/dns-query` DoH endpoint that lets **exit-node clients resolve public DNS automatically**. A declared dependency of `advertise-exit-node` that the allowlist didn't pull in — see [Why peerapiserver is required for exit-node DNS](#why-peerapiserver-is-required-for-exit-node-dns) |
 | portmapper (NAT-PMP/PCP/UPnP) | Punch through upstream NAT |
 | listenrawdisco | Raw socket disco for better NAT traversal |
 | health | Powers `tailscale status` output |
@@ -307,6 +308,80 @@ If a future release adds a genuine non-netstack quad-100 path — or the daemon
 itself is refactored — re-test whether `netstack` can be dropped again. The
 canary is simple: from inside the container, `dig google.com @100.100.100.100`
 must return answers and `ping <host>.<tailnet>.ts.net` must resolve.
+
+### Why peerapiserver is required for exit-node DNS
+
+This is a second non-obvious DNS inclusion, and it exposes a limitation of the
+allowlist build strategy.
+
+**Symptom.** With `netstack` enabled, MagicDNS worked from the router and from
+LAN hosts, including public names. But a device using this router **as its exit
+node** could not resolve public names: `dig google.com @100.100.100.100` on the
+*client* returned an instant authoritative `SERVFAIL` (`flags: qr aa rd ad`,
+`Query time: 0 msec`, "recursion not available"). Tailnet names and raw-IP
+connectivity (e.g. `ping 1.1.1.1`) through the exit node worked.
+
+**Root cause.** The `SERVFAIL` is generated **on the client**, locally, with no
+network I/O — which is why it is instant and authoritative. The path
+(traced through v1.98.5 source):
+
+1. The client's query for `google.com` reaches its in-process resolver, which
+   determines the name is not a tailnet name and marks it for forwarding
+   (`net/dns/resolver/tsdns.go`).
+2. The forwarder looks up which upstream resolver to use for the catch-all
+   `"."` route (`net/dns/resolver/forwarder.go` → `resolvers()`).
+3. That route set is **empty**, so `forwardWithDestChan` short-circuits and
+   synthesises an authoritative `SERVFAIL` (`servfailResponse`, `aa=1`) without
+   opening any socket. The query never reaches this router at all.
+
+Why the route set is empty: when a client selects an exit node,
+`dnsConfigForNetmap` (`ipn/ipnlocal/node_backend.go`) deliberately routes **all**
+default DNS through the exit node and drops the client's own LAN/system
+resolver — the whole premise of an exit node is "send everything, including
+DNS, through me." It does this by setting the client's default resolver to the
+exit node's **DoH proxy** URL (`http://<peer>/dns-query`). But that only happens
+if `exitNodeCanProxyDNS(thisRouter)` returns true — i.e. if **this router
+advertises a working PeerAPI DoH endpoint**. If it does not, and there is no
+tailnet global nameserver to fall back to, the client ends up with an empty
+default route and returns `SERVFAIL`.
+
+**Why this router didn't advertise the DoH proxy.** The `/dns-query` DoH
+endpoint is part of the **PeerAPI server**, gated by
+`buildfeatures.HasPeerAPIServer` (`ipn/ipnlocal/peerapi.go`). With
+`ts_omit_peerapiserver`, `initPeerAPIListenerLocked()` returns early: no PeerAPI
+listener is created, the `PeerAPIDNS` service is never advertised, and
+`peerCanProxyDNS()` is false for this node on every client.
+
+**The allowlist gap that caused it.** In `feature/featuretags/featuretags.go`,
+`advertiseexitnode` **declares a dependency on `peerapiserver`** ("to run the
+ExitDNS server"). Upstream's own `--add` resolution would have pulled it in.
+But this build's allowlist works differently: it runs `featuretags --min` to get
+the full omit set, then strips the specific `ts_omit_<feature>` tags it wants —
+it does **not** re-resolve transitive `Deps`. So opting in `advertiseexitnode`
+did not pull in `peerapiserver`, and `featuretags --min` had emitted
+`ts_omit_peerapiserver`, leaving the node an exit node *without* its declared
+ExitDNS dependency — a feature combination upstream's graph says shouldn't
+occur. Including `peerapiserver` explicitly closes the gap.
+
+> **Known limitation:** the allowlist (strip-individual-`ts_omit_`-tags) does
+> not resolve feature dependencies. When opting a feature in, check its `Deps`
+> in `featuretags.go` and add them explicitly. `peerapiserver` is the only such
+> gap found and fixed so far; a full dependency audit has not been done.
+
+**Cost.** Negligible. `peerapiserver` has **no** `Deps` and pulls in no large
+subsystems; measured at ~+10 kB on the UPX'd binary (arm64), rootfs unchanged
+within measurement noise.
+
+**Result.** The router now serves the exit-node DoH DNS proxy, so devices using
+it as their exit node resolve public names automatically — the normal exit-node
+behavior — with **no** tailnet DNS configuration required. (Setting a tailnet
+global nameserver in the admin console is an alternative runtime fix that also
+works, by populating the client's default resolver directly; it is not required
+once the router serves the proxy.)
+
+**Canary for future bumps:** from a client using this router as exit node,
+`dig google.com @100.100.100.100` must return real answers with `flags: ... ra`
+(recursion available) and a non-zero query time.
 
 ### Log verbosity filtering
 
