@@ -12,9 +12,22 @@
 # it would need a glibc (Debian) base and produces a much larger image. See
 # README for details if you need it.
 #
-# The Go builder cross-compiles, so it always runs NATIVELY on the build host
-# ($BUILDPLATFORM) for speed; only the busybox stage and the final image run on
-# the target platform.
+# Both the Go (Tailscale) stage and the C (busybox) stage cross-compile: they
+# always run NATIVELY on the build host ($BUILDPLATFORM) and produce binaries
+# for $TARGETPLATFORM. This eliminates QEMU emulation entirely from the build,
+# which is the main source of slowness in multi-arch builds. Only the final
+# scratch stage pulls in the target-arch-specific layers (CA certs, busybox
+# rootfs) which are just file copies with no emulated execution.
+#
+# Cross-compilation for C (busybox) is provided by tonistiigi/xx, which
+# configures clang+lld as a cross-compiler and installs musl headers for the
+# target arch via xx-apk.
+
+# =============================================================================
+# xx: Dockerfile cross-compilation helpers (provides xx-clang, xx-apk, etc.)
+# =============================================================================
+# renovate: datasource=docker depName=tonistiigi/xx versioning=docker
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.9.0@sha256:c64defb9ed5a91eacb37f96ccc3d4cd72521c4bd18d5442905b95e2226b0e707 AS xx
 
 # =============================================================================
 # Stage 1: Build Tailscale combined binary (cross-compiled, runs natively)
@@ -236,7 +249,7 @@ RUN printf '%s\n' \
     chmod +x /out/usrlocalbin/entrypoint.sh
 
 # =============================================================================
-# Stage 2: Custom minimal busybox
+# Stage 2: Custom minimal busybox (cross-compiled, runs natively on build host)
 # =============================================================================
 # The official busybox:musl image ships all ~404 applets at ~1.24 MB. For a
 # debug shell on a flash-constrained router we only need ~100 applets, so we
@@ -253,15 +266,56 @@ RUN printf '%s\n' \
 # acceptable for an occasional debug shell. RouterOS stores the EXTRACTED
 # rootfs on disk (overlayfs), so the ~190 kB UPX saving is real on-disk space.
 #
-# This stage runs on the TARGET platform (no --platform override): gcc then
-# produces native target-arch binaries directly. Under buildx this is
-# transparently emulated via binfmt/QEMU for non-native targets.
-FROM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4 AS busybox
+# This stage runs NATIVELY on the build host (--platform=$BUILDPLATFORM) and
+# cross-compiles busybox for the target architecture using clang+lld via the
+# tonistiigi/xx helpers. This eliminates QEMU emulation from the busybox build,
+# which was the main source of slowness for arm64/arm/v7 targets.
+#
+# Cross-compilation setup:
+#   - xx-apk installs musl-dev and linux-headers for the TARGET arch under
+#     /<triple> (a secondary sysroot), while clang/lld/upx/make stay native.
+#   - xx-clang --setup-target-triple creates <triple>-clang / <triple>-cc
+#     aliases in PATH that busybox's Makefile picks up via CROSS_COMPILE.
+#   - Busybox make receives:
+#       CROSS_COMPILE=<triple>-   → picks up <triple>-clang (from xx aliases)
+#       CC=clang                  → use clang (aliased target via CROSS_COMPILE)
+#       HOSTCC=gcc                → compile host helper tools with native gcc
+#   - upx (native x86_64 binary) can compress target-arch binaries since UPX
+#     operates on the ELF file format regardless of the target ISA.
+#
+# Applet symlink probing: for native-arch builds the probe runs directly;
+# for cross-compiled binaries we use QEMU user-mode emulation (from binfmt)
+# only for this one lightweight probe step (busybox --help per applet), not
+# for the compile itself. The probe can alternatively be skipped by using
+# a pre-enumerated applet list, but the current approach is simpler.
+FROM --platform=$BUILDPLATFORM alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4 AS busybox
+
+# Copy xx cross-compilation helpers (xx-clang, xx-apk, xx-info, etc.)
+COPY --from=xx / /
 
 # renovate: datasource=docker depName=busybox versioning=docker
 ARG BUSYBOX_VERSION=1.38.0
 
-RUN apk add --no-cache build-base linux-headers wget bzip2 perl upx
+# Target platform ARGs (provided automatically by buildx).
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+# Native build tools (clang/lld for cross-compiling; gcc/make/upx run natively).
+# xx-apk installs the target-arch sysroot: musl-dev (C library headers + CRT),
+# gcc (provides crtbeginS.o/crtendS.o and libgcc needed by clang on Alpine),
+# and linux-headers (required by busybox for <linux/*.h> / <net/*.h>).
+RUN apk add --no-cache \
+        clang \
+        lld \
+        llvm \
+        gcc \
+        make \
+        wget \
+        bzip2 \
+        perl \
+        upx && \
+    xx-apk add --no-cache musl-dev gcc linux-headers
 
 RUN wget -q https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2 \
  && tar xf busybox-${BUSYBOX_VERSION}.tar.bz2
@@ -269,7 +323,34 @@ WORKDIR /busybox-${BUSYBOX_VERSION}
 
 # allnoconfig = every feature OFF; then enable only the curated applet set.
 COPY busybox-applets.config /tmp/applets.config
-RUN make allnoconfig && \
+# Set up xx cross-compiler aliases (<triple>-clang, <triple>-cc, etc.) and
+# build busybox.
+#
+# Key make variables:
+#   ARCH           — busybox ARCH; must match the cross-target, not the build
+#                    host. busybox's Makefile would otherwise read SUBARCH from
+#                    `uname -m` (the BUILD host's arch) which is wrong when
+#                    cross-compiling. We map TARGETARCH to busybox's arch name.
+#                    busybox uses -include arch/$(ARCH)/Makefile; missing arch
+#                    dirs are silently ignored, so any value is safe.
+#   CC             — busybox defaults to $(CROSS_COMPILE)gcc. We override CC to
+#                    the full <triple>-clang path so it resolves to the xx alias
+#                    (which sets --target and --sysroot for the cross-compiler).
+#                    Setting CC= avoids needing a <triple>-gcc symlink.
+#   HOSTCC         — native compiler for host-side build tools (scripts/kconfig,
+#                    gen_build_files, etc.); must NOT be the cross-compiler.
+#   SKIP_STRIP     — defer stripping to after symlink probing (we strip below
+#                    with llvm-strip, which handles any target ELF arch).
+RUN xx-clang --setup-target-triple && \
+    CROSS=$(xx-info triple) && \
+    # Map TARGETARCH to the busybox ARCH value.
+    case "${TARGETARCH}" in \
+      amd64)  BUSYBOX_ARCH=x86_64 ;; \
+      arm64)  BUSYBOX_ARCH=aarch64 ;; \
+      arm)    BUSYBOX_ARCH=arm ;; \
+      *)      BUSYBOX_ARCH=${TARGETARCH} ;; \
+    esac && \
+    make allnoconfig ARCH="${BUSYBOX_ARCH}" && \
     while read -r sym; do \
       case "$sym" in ''|\#*) continue ;; esac; \
       if grep -q "^# CONFIG_${sym} is not set" .config; then \
@@ -278,9 +359,15 @@ RUN make allnoconfig && \
         echo "CONFIG_${sym}=y" >> .config; \
       fi; \
     done < /tmp/applets.config && \
-    yes "" | make oldconfig >/dev/null 2>&1 && \
-    make -j"$(nproc)" >/dev/null 2>&1 && \
-    strip busybox
+    yes "" | make oldconfig ARCH="${BUSYBOX_ARCH}" >/dev/null 2>&1 && \
+    make -j"$(nproc)" \
+        ARCH="${BUSYBOX_ARCH}" \
+        CROSS_COMPILE="${CROSS}-" \
+        CC="${CROSS}-clang" \
+        HOSTCC=gcc \
+        SKIP_STRIP=y \
+        >/dev/null 2>&1 && \
+    llvm-strip busybox
 
 # Lay out a minimal rootfs with busybox + an applet symlink per applet.
 # Symlinks (argv[0] dispatch) are how busybox selects an applet and make the
@@ -290,6 +377,10 @@ RUN make allnoconfig && \
 # for non-applet symbols like FEATURE_* / STATIC, which we filter out).
 # We generate symlinks from the UNCOMPRESSED binary (so the probe is reliable),
 # then UPX-compress the binary in place afterwards.
+#
+# Note: probing cross-compiled binaries requires binfmt/QEMU user-mode. This
+# is only a lightweight per-applet help-flag check, not a full emulated build.
+# If QEMU is unavailable in CI, replace the probe with a static applet list.
 RUN mkdir -p /rootfs/bin && \
     grep '^CONFIG_.*=y' .config \
       | sed -e 's/^CONFIG_//' -e 's/=y$//' \
