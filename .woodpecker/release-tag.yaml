@@ -29,7 +29,7 @@ when:
 
 steps:
   - name: Get git token from OpenBao
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
       ROLE_ID:
@@ -72,7 +72,7 @@ steps:
       - git push "https://woodpecker:$GIT_TOKEN@gitea.lumpiasty.xyz/lumpiasty/mikrotik-tailscale.git" "$TAG"
       - echo "Pushed $TAG"
   - name: Invalidate OpenBao token
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
     commands:

@@ -30,7 +30,7 @@ skip_clone: true
 
 steps:
   - name: Get renovate token from OpenBao
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
       ROLE_ID:
@@ -76,7 +76,7 @@ steps:
       - export GITHUB_COM_TOKEN=$(cat /woodpecker/github_com_token)
       - /usr/local/sbin/renovate-entrypoint.sh renovate
   - name: Invalidate OpenBao token
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
     commands:
