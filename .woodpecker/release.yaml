@@ -25,7 +25,7 @@ when:
 
 steps:
   - name: Get registry creds from OpenBao
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
       ROLE_ID:
@@ -57,7 +57,7 @@ steps:
       # Credentials (PLUGIN_USERNAME / PLUGIN_PASSWORD) come from OpenBao.
       env_file: /woodpecker/registry.env
   - name: Invalidate OpenBao token
-    image: quay.io/openbao/openbao:2.5.4
+    image: quay.io/openbao/openbao:2.5.5
     environment:
       VAULT_ADDR: https://openbao.lumpiasty.xyz:8200
     commands:
