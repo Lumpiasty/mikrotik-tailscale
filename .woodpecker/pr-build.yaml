@@ -30,7 +30,7 @@ when:
 
 steps:
   - name: Build all arches (no push)
-    image: woodpeckerci/plugin-docker-buildx:6.1.0
+    image: woodpeckerci/plugin-docker-buildx:6.1.1
     privileged: true
     settings:
       platforms: linux/amd64,linux/arm64,linux/arm/v7
