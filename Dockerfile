@@ -35,7 +35,7 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.9.0@sha256:c64defb9ed5a91eacb37f9
 FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
 # renovate: datasource=github-releases depName=tailscale packageName=tailscale/tailscale versioning=semver
-ARG TAILSCALE_VERSION=v1.98.8
+ARG TAILSCALE_VERSION=v1.98.9
 
 # Provided automatically by buildx for the target platform.
 ARG TARGETOS
