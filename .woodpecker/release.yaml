@@ -43,7 +43,7 @@ steps:
       - 'printf "PLUGIN_PASSWORD=%s\n" "$(bao kv get -mount secret -field REGISTRY_PASSWORD container-registry)" >> /woodpecker/registry.env'
 
   - name: Build and push multi-arch image
-    image: woodpeckerci/plugin-docker-buildx:6.1.0
+    image: woodpeckerci/plugin-docker-buildx:6.1.1
     privileged: true
     settings:
       registry: gitea.lumpiasty.xyz
