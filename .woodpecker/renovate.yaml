@@ -47,7 +47,7 @@ steps:
   - name: renovate
     pull: true
     # Renovate's built-in "woodpecker" manager tracks this image automatically.
-    image: renovate/renovate:43
+    image: renovate/renovate:44
     environment:
       # --- platform / target ---
       RENOVATE_PLATFORM: gitea
