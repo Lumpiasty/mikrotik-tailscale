@@ -32,7 +32,7 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.9.0@sha256:c64defb9ed5a91eacb37f9
 # =============================================================================
 # Stage 1: Build Tailscale combined binary (cross-compiled, runs natively)
 # =============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:3f6d04dc61331ee3c2fbbaad62d54412a84680f6a041d269a20a5270a078515b AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
 
 # renovate: datasource=github-releases depName=tailscale packageName=tailscale/tailscale versioning=semver
 ARG TAILSCALE_VERSION=v1.102.3
