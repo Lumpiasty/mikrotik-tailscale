@@ -27,7 +27,7 @@
 # xx: Dockerfile cross-compilation helpers (provides xx-clang, xx-apk, etc.)
 # =============================================================================
 # renovate: datasource=docker depName=tonistiigi/xx versioning=docker
-FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.9.0@sha256:c64defb9ed5a91eacb37f96ccc3d4cd72521c4bd18d5442905b95e2226b0e707 AS xx
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.10.0@sha256:40fe21f44bb8cddf1eb1226db190d0a984118f62ee02a91b77d99448d28264a6 AS xx
 
 # =============================================================================
 # Stage 1: Build Tailscale combined binary (cross-compiled, runs natively)
