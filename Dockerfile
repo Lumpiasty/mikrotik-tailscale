@@ -90,8 +90,20 @@ COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
 #   dns                 — MagicDNS; configure MikroTik DNS to forward
 #                         *.ts.net → 100.100.100.100; use --no-dns daemon
 #                         flag to skip writing /etc/resolv.conf
+#   udptransport        — REQUIRED for direct (non-DERP) peer connections. Added
+#                         as a separate tag in v1.104.0; when omitted, magicsock
+#                         never runs its UDP receive loops and ALL peer traffic
+#                         is relayed over DERP. Symptom on omission: health
+#                         warning "The MagicSock function ReceiveIPv4 is not
+#                         running" (magicsock-receive-func-error).
+#   nattraversal        — STUN, disco hole punching, UDP peer relay client. Also
+#                         new in v1.104.0; without it direct UDP only works to
+#                         peers with directly reachable endpoints. Depends on
+#                         udptransport.
 #   portmapper          — NAT-PMP / PCP / UPnP to punch through upstream NAT
+#                         (depends on nattraversal)
 #   listenrawdisco      — raw sockets for more robust disco/NAT-traversal
+#                         (depends on udptransport)
 #   health              — health subsystem required by 'tailscale status'
 #   iptables            — Linux iptables support for routing rules
 #   unixsocketidentity  — REQUIRED for the CLI to talk to the daemon. Without it,
@@ -182,31 +194,37 @@ COPY patches/stderr_verbosity_filter.go cmd/tailscaled/
 #                   which is exactly the flash wear we want to avoid.
 #   logtail       — no persistent log writes to flash; also pass
 #                   --no-logs-no-support at runtime
+#   dnsresolvecache — persists DNS resolutions to disk; flash writes for a
+#                   marginal cold-start benefit
 #   ssh           — not needed; access via MikroTik SSH + tailscale CLI
 #   all GUI/desktop/cloud/k8s features — irrelevant for a headless router
 #
 # NOTE: netstack/gro are NOT in this omit list — see the opted-in section above
 # for why MagicDNS quad-100 serving structurally requires them in v1.98.5.
 
+# The omit list is wrapped in commas so each pattern matches a WHOLE tag
+# (",ts_omit_dns," must not eat the prefix of ",ts_omit_dnsresolvecache,").
 RUN mkdir -p /out && \
     ALL_OMIT=$(GOOS= GOARCH= go run ./cmd/featuretags --min --add=osrouter) && \
-    TAGS=$(echo "ts_include_cli,${ALL_OMIT}" | \
+    TAGS=$(echo ",ts_include_cli,${ALL_OMIT}," | \
         sed \
-          -e 's/ts_omit_advertiseexitnode,\{0,1\}//g' \
-          -e 's/ts_omit_advertiseroutes,\{0,1\}//g' \
-          -e 's/ts_omit_useexitnode,\{0,1\}//g' \
-          -e 's/ts_omit_useroutes,\{0,1\}//g' \
-          -e 's/ts_omit_dns,\{0,1\}//g' \
-          -e 's/ts_omit_portmapper,\{0,1\}//g' \
-          -e 's/ts_omit_listenrawdisco,\{0,1\}//g' \
-          -e 's/ts_omit_health,\{0,1\}//g' \
-          -e 's/ts_omit_iptables,\{0,1\}//g' \
-          -e 's/ts_omit_unixsocketidentity,\{0,1\}//g' \
-          -e 's/ts_omit_ipnbus,\{0,1\}//g' \
-          -e 's/ts_omit_netstack,\{0,1\}//g' \
-          -e 's/ts_omit_gro,\{0,1\}//g' \
-          -e 's/ts_omit_peerapiserver,\{0,1\}//g' \
-          -e 's/,$//' \
+          -e 's/,ts_omit_advertiseexitnode,/,/' \
+          -e 's/,ts_omit_advertiseroutes,/,/' \
+          -e 's/,ts_omit_useexitnode,/,/' \
+          -e 's/,ts_omit_useroutes,/,/' \
+          -e 's/,ts_omit_dns,/,/' \
+          -e 's/,ts_omit_udptransport,/,/' \
+          -e 's/,ts_omit_nattraversal,/,/' \
+          -e 's/,ts_omit_portmapper,/,/' \
+          -e 's/,ts_omit_listenrawdisco,/,/' \
+          -e 's/,ts_omit_health,/,/' \
+          -e 's/,ts_omit_iptables,/,/' \
+          -e 's/,ts_omit_unixsocketidentity,/,/' \
+          -e 's/,ts_omit_ipnbus,/,/' \
+          -e 's/,ts_omit_netstack,/,/' \
+          -e 's/,ts_omit_gro,/,/' \
+          -e 's/,ts_omit_peerapiserver,/,/' \
+          -e 's/^,//' -e 's/,$//' \
     ) && \
     echo "Build tags: ${TAGS}" && \
     # Map Docker's TARGETARCH/TARGETVARIANT to Go's GOARCH/GOARM.

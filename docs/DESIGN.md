@@ -156,6 +156,8 @@ that's a separate build, not just a `--platform` change.
 | DNS / MagicDNS | Resolve `*.ts.net` names (resolver + resolv.conf manager). **Note:** serving `100.100.100.100` also requires `netstack` — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
 | `netstack` + `gro` | gVisor userspace stack. Counter-intuitively **required** to serve MagicDNS on `100.100.100.100`, even though the router uses a real kernel TUN — see [Why netstack is required (even with a kernel TUN)](#why-netstack-is-required-even-with-a-kernel-tun) |
 | `peerapiserver` | Serves the PeerAPI, including the `/dns-query` DoH endpoint that lets **exit-node clients resolve public DNS automatically**. A declared dependency of `advertise-exit-node` that the allowlist didn't pull in — see [Why peerapiserver is required for exit-node DNS](#why-peerapiserver-is-required-for-exit-node-dns) |
+| udptransport | **Required** for direct peer connections (split out in v1.104.0). Without it magicsock never runs its UDP receive loops, all traffic is relayed via DERP, and health reports "The MagicSock function ReceiveIPv4 is not running" |
+| nattraversal | STUN, disco hole punching, UDP peer relay client (split out in v1.104.0). Without it direct UDP only works to peers with directly reachable endpoints |
 | portmapper (NAT-PMP/PCP/UPnP) | Punch through upstream NAT |
 | listenrawdisco | Raw socket disco for better NAT traversal |
 | health | Powers `tailscale status` output |
@@ -172,6 +174,7 @@ that's a separate build, not just a `--platform` change.
 | `cachenetmap` | **Deliberately removed** — see [Why netmap disk-caching is removed](#why-netmap-disk-caching-is-removed) |
 | `logtail` | Would attempt persistent log writes; wear flash. Removing it also removes stderr verbosity filtering — restored by an injected filter, see [Log verbosity filtering](#log-verbosity-filtering) |
 | `netlog` | Network flow logging; separate concern |
+| `dnsresolvecache` | Persists DNS resolutions to disk — flash writes for a marginal cold-start benefit |
 | `ssh` | Access via MikroTik SSH + `tailscale` CLI instead |
 | `linuxdnsfight` | inotify on `/etc/resolv.conf`; no systemd in container |
 | `networkmanager` / `resolved` / `dbus` / `sdnotify` | No systemd stack in container |
