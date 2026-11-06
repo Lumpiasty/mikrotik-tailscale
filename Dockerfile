@@ -321,7 +321,7 @@ RUN printf '%s\n' \
 # only for this one lightweight probe step (busybox --help per applet), not
 # for the compile itself. The probe can alternatively be skipped by using
 # a pre-enumerated applet list, but the current approach is simpler.
-FROM --platform=$BUILDPLATFORM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS busybox
+FROM --platform=$BUILDPLATFORM alpine:3.24.4@sha256:93b41ef40b1677fce8fcc64ff4af09daddfacf5040afde618bc46c1e2d1cc7d4 AS busybox
 
 # Copy xx cross-compilation helpers (xx-clang, xx-apk, xx-info, etc.)
 COPY --from=xx / /
